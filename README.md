@@ -69,8 +69,8 @@ Displayed percent = `used.val / monthlyLimit.val * 100`.
 | Mock fallback (`GROK_USAGE_MOCK=1`) | Done |
 | OIDC token refresh (writes back to auth.json) | Done |
 | Grok logo in menubar | Done |
+| Finer percent under 10% | Done |
 | Notifications at 80/100 % | Not yet |
-| Finer percent under 10% | Not yet |
 
 ## Layout
 

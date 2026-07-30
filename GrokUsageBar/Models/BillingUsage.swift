@@ -38,8 +38,14 @@ struct BillingUsage: Equatable, Sendable {
         fetchedAt: .distantPast
     )
 
+    /// Compact label for the menu bar and panel.
+    /// Under 10% keeps one decimal so low burn rates stay visible (e.g. 0.7%).
     var percentDisplay: String {
-        String(format: "%.0f%%", creditUsagePercent.clamped(to: 0...100))
+        let value = creditUsagePercent.clamped(to: 0...100)
+        if value >= 10 || value == 0 {
+            return String(format: "%.0f%%", value)
+        }
+        return String(format: "%.1f%%", value)
     }
 
     var usageLevel: UsageLevel {
