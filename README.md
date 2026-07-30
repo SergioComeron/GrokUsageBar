@@ -3,8 +3,8 @@
 Menubar utility for macOS that shows **Grok Build credit usage %** — the same idea as the in-app `/usage` (alias `/cost`) command.
 
 ```
-Barra:  ⚡ 37%
-Clic:   detalle del periodo · Refresh · Billing… · Quit
+Barra:  [logo] 0.7%
+Clic:   detalle del periodo · Refresh · Billing… · Settings… · Quit
 ```
 
 ## Requirements
@@ -71,6 +71,7 @@ Displayed percent = `used.val / monthlyLimit.val * 100`.
 | Grok logo in menubar | Done |
 | Finer percent under 10% | Done |
 | Notifications at 80/100 % | Done |
+| Open at login (`SMAppService`) | Done |
 
 ## Layout
 
@@ -83,8 +84,10 @@ GrokUsageBar/
     ├── Models/BillingUsage.swift
     ├── Services/
     │   ├── GrokAuthStore.swift    # ~/.grok/auth.json
-    │   ├── BillingService.swift   # Mock + Live stub
-    │   └── UsageStore.swift       # poll + state
+    │   ├── BillingService.swift   # Mock + Live
+    │   ├── UsageStore.swift       # poll + state
+    │   ├── UsageNotifier.swift
+    │   └── LaunchAtLogin.swift
     ├── Views/
     │   ├── MenuBarLabel.swift
     │   ├── MenuBarPanel.swift
@@ -106,10 +109,16 @@ When enabled (default), crossing **80%** or **100%** posts a local notification
 once per billing period. Toggle in Settings. macOS may ask for notification
 permission on first launch.
 
+## Open at login
+
+Settings → **Open at login** registers the app with `SMAppService.mainApp`.
+macOS may list it under *System Settings → General → Login Items*. Use the
+built `.app` (e.g. under `build/Build/Products/Debug/`) so the login item
+points at a real bundle path.
+
 ## Next steps
 
-1. Optional: launch at login.
-2. Optional: sparkline of billing history.
+1. Optional: sparkline of billing history.
 
 ## Privacy
 

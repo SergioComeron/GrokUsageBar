@@ -7,9 +7,34 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var store: UsageStore
+    @State private var launchAtLogin = LaunchAtLogin.isEnabled
+    @State private var launchAtLoginMessage: String?
+    @State private var launchAtLoginDetail = LaunchAtLogin.statusDescription
 
     var body: some View {
         Form {
+            Section("General") {
+                Toggle("Open at login", isOn: $launchAtLogin)
+                    .onChange(of: launchAtLogin) { _, newValue in
+                        if let error = LaunchAtLogin.setEnabled(newValue) {
+                            launchAtLoginMessage = error
+                            // Re-sync UI with system state after failure.
+                            launchAtLogin = LaunchAtLogin.isEnabled
+                        } else {
+                            launchAtLoginMessage = nil
+                        }
+                        launchAtLoginDetail = LaunchAtLogin.statusDescription
+                    }
+                Text(launchAtLoginDetail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if let launchAtLoginMessage {
+                    Text(launchAtLoginMessage)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
+
             Section("Refresh") {
                 Stepper(
                     value: $store.refreshIntervalMinutes,
@@ -51,7 +76,11 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 420, height: 340)
+        .frame(width: 420, height: 400)
         .padding()
+        .onAppear {
+            launchAtLogin = LaunchAtLogin.isEnabled
+            launchAtLoginDetail = LaunchAtLogin.statusDescription
+        }
     }
 }

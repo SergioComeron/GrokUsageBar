@@ -163,6 +163,10 @@ struct MenuBarPanel: View {
                 store.openBillingPage()
             }
 
+            SettingsLink {
+                Text("Settings…")
+            }
+
             Spacer()
 
             Button("Quit") {
