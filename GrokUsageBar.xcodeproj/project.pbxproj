@@ -16,6 +16,7 @@
 		A10000000000000000000007 /* MenuBarPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000007 /* MenuBarPanel.swift */; };
 		A10000000000000000000008 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000008 /* SettingsView.swift */; };
 		A10000000000000000000009 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000009 /* Assets.xcassets */; };
+		A1000000000000000000000B /* UsageNotifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000B /* UsageNotifier.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -29,6 +30,7 @@
 		B10000000000000000000008 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		B10000000000000000000009 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B1000000000000000000000A /* GrokUsageBar.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = GrokUsageBar.entitlements; sourceTree = "<group>"; };
+		B1000000000000000000000B /* UsageNotifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageNotifier.swift; sourceTree = "<group>"; };
 		C10000000000000000000001 /* GrokUsageBar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GrokUsageBar.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -86,6 +88,7 @@
 				B10000000000000000000003 /* GrokAuthStore.swift */,
 				B10000000000000000000004 /* BillingService.swift */,
 				B10000000000000000000005 /* UsageStore.swift */,
+				B1000000000000000000000B /* UsageNotifier.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -174,6 +177,7 @@
 				A10000000000000000000003 /* GrokAuthStore.swift in Sources */,
 				A10000000000000000000004 /* BillingService.swift in Sources */,
 				A10000000000000000000005 /* UsageStore.swift in Sources */,
+				A1000000000000000000000B /* UsageNotifier.swift in Sources */,
 				A10000000000000000000006 /* MenuBarLabel.swift in Sources */,
 				A10000000000000000000007 /* MenuBarPanel.swift in Sources */,
 				A10000000000000000000008 /* SettingsView.swift in Sources */,

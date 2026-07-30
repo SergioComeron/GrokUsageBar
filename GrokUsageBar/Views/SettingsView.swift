@@ -20,6 +20,13 @@ struct SettingsView: View {
                 }
             }
 
+            Section("Notifications") {
+                Toggle("Alert at 80% and 100%", isOn: $store.notificationsEnabled)
+                Text("Fires once per billing period for each threshold. Requires notification permission in System Settings.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Session") {
                 LabeledContent("Auth file") {
                     Text("~/.grok/auth.json")
@@ -44,7 +51,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 420, height: 280)
+        .frame(width: 420, height: 340)
         .padding()
     }
 }

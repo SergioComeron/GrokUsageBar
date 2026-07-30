@@ -17,6 +17,14 @@ final class UsageStore: ObservableObject {
             scheduleTimer()
         }
     }
+    @Published var notificationsEnabled: Bool {
+        didSet {
+            UsageNotifier.isEnabled = notificationsEnabled
+            if notificationsEnabled {
+                Task { await UsageNotifier.requestAuthorizationIfNeeded() }
+            }
+        }
+    }
 
     private var billing: any BillingServing
     private var timer: Timer?
@@ -30,8 +38,14 @@ final class UsageStore: ObservableObject {
         self.billing = billing ?? BillingServiceFactory.make()
         let stored = UserDefaults.standard.object(forKey: Keys.interval) as? Double
         self.refreshIntervalMinutes = stored ?? 10
+        self.notificationsEnabled = UsageNotifier.isEnabled
         scheduleTimer()
-        Task { await refresh() }
+        Task {
+            if UsageNotifier.isEnabled {
+                await UsageNotifier.requestAuthorizationIfNeeded()
+            }
+            await refresh()
+        }
     }
 
     var usage: BillingUsage? {
@@ -61,14 +75,14 @@ final class UsageStore: ObservableObject {
 
         do {
             let usage = try await billing.fetchUsage(session: session)
-            state = .loaded(usage)
+            await applyLoaded(usage)
         } catch let error as BillingServiceError where error == .unauthorized {
             // Access token rejected: force one OIDC refresh and retry once.
             do {
                 let renewed = try await GrokAuthStore.validSession(forceRefresh: true)
                 sessionEmail = renewed.email
                 let usage = try await billing.fetchUsage(session: renewed)
-                state = .loaded(usage)
+                await applyLoaded(usage)
             } catch let error as GrokAuthError {
                 state = Self.mapAuthError(error)
             } catch {
@@ -77,6 +91,11 @@ final class UsageStore: ObservableObject {
         } catch {
             state = .failed(error.localizedDescription)
         }
+    }
+
+    private func applyLoaded(_ usage: BillingUsage) async {
+        state = .loaded(usage)
+        await UsageNotifier.evaluate(usage)
     }
 
     func openBillingPage() {

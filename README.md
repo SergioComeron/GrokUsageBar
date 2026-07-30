@@ -70,7 +70,7 @@ Displayed percent = `used.val / monthlyLimit.val * 100`.
 | OIDC token refresh (writes back to auth.json) | Done |
 | Grok logo in menubar | Done |
 | Finer percent under 10% | Done |
-| Notifications at 80/100 % | Not yet |
+| Notifications at 80/100 % | Done |
 
 ## Layout
 
@@ -100,11 +100,16 @@ the app POSTs to `{oidc_issuer}/oauth2/token` with `grant_type=refresh_token`
 and updates `key`, `refresh_token` and `expires_at` in `~/.grok/auth.json`
 (mode `0600`). Grok Build and this app then share the renewed session.
 
+## Notifications
+
+When enabled (default), crossing **80%** or **100%** posts a local notification
+once per billing period. Toggle in Settings. macOS may ask for notification
+permission on first launch.
+
 ## Next steps
 
-1. Notifications at 80 / 100 % usage.
-2. Show one decimal place when usage is under 10 %.
-3. Optional: launch at login, sparkline of history.
+1. Optional: launch at login.
+2. Optional: sparkline of billing history.
 
 ## Privacy
 
