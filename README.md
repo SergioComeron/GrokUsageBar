@@ -13,27 +13,43 @@ Clic:   detalle del periodo · Refresh · Billing… · Settings… · Quit
 - [Grok Build](https://grok.com) session via `grok login` → `~/.grok/auth.json`
 - Xcode (this machine has `/Applications/Xcode-beta.app`)
 
-## Open & run
+## Install (recommended, daily use)
+
+Signed **Release** build → `/Applications`, then open:
 
 ```bash
-export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
-open /Users/sergiocomeron/projects/GrokUsageBar/GrokUsageBar.xcodeproj
-```
-
-In Xcode: select the **GrokUsageBar** scheme → **Run** (⌘R).
-
-Or from the terminal:
-
-```bash
-export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
 cd /Users/sergiocomeron/projects/GrokUsageBar
-xcodebuild -scheme GrokUsageBar -configuration Debug build
-# then open the .app under DerivedData, or:
-xcodebuild -scheme GrokUsageBar -configuration Debug -derivedDataPath build
-open build/Build/Products/Debug/GrokUsageBar.app
+./install.sh
 ```
 
-The app is an **agent** (`LSUIElement`): no Dock icon, only the menu bar.
+Then in the menu panel → **Settings…** → enable **Open at login**.
+
+Requires Xcode and your Apple Development certificate. The project uses
+team `6PUHQ5CYQS` (override with `DEVELOPMENT_TEAM=… ./install.sh` if needed).
+
+## Develop
+
+```bash
+export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
+open GrokUsageBar.xcodeproj
+```
+
+Run the **GrokUsageBar** scheme (⌘R). The app is an **agent** (`LSUIElement`):
+no Dock icon, only the menu bar.
+
+### Signing & distribution
+
+| Goal | What you need |
+|---|---|
+| Run on **your** Mac | **Apple Development** (you already have this) + `./install.sh` |
+| Share .app with others / fewer Gatekeeper prompts | **Developer ID Application** cert + **notarization** (`notarytool`) |
+| Mac App Store | **Apple Distribution** + App Store Connect (different pipeline) |
+
+You currently have Development identities installed. For Developer ID:
+
+1. [developer.apple.com](https://developer.apple.com/account/resources/certificates/list) → Certificates → **Developer ID Application**
+2. Install the cert in Keychain
+3. Archive/sign Release with that identity and submit with `xcrun notarytool`
 
 ## Data source (same as `/usage`)
 
