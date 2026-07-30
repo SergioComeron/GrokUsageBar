@@ -67,9 +67,10 @@ Displayed percent = `used.val / monthlyLimit.val * 100`.
 | Read `~/.grok/auth.json` | Done |
 | Live billing API | Done |
 | Mock fallback (`GROK_USAGE_MOCK=1`) | Done |
-| Token refresh like the CLI | Not yet (re-login when expired) |
+| OIDC token refresh (writes back to auth.json) | Done |
+| Grok logo in menubar | Done |
 | Notifications at 80/100 % | Not yet |
-| Grok logo in menubar | Not yet |
+| Finer percent under 10% | Not yet |
 
 ## Layout
 
@@ -92,12 +93,18 @@ GrokUsageBar/
     └── GrokUsageBar.entitlements  # sandbox OFF (reads home auth file)
 ```
 
+## Auth refresh
+
+When the access token expires within 5 minutes (or the billing API returns 401),
+the app POSTs to `{oidc_issuer}/oauth2/token` with `grant_type=refresh_token`
+and updates `key`, `refresh_token` and `expires_at` in `~/.grok/auth.json`
+(mode `0600`). Grok Build and this app then share the renewed session.
+
 ## Next steps
 
-1. Capture Grok Build’s `/usage` billing request (host, path, body, response JSON).
-2. Point `LiveBillingService` at it and map `creditUsagePercent`.
-3. Implement OIDC refresh using `refresh_token` + `oidc_issuer` / `oidc_client_id`.
-4. Optional: Launch at login, colour thresholds, sparkline.
+1. Notifications at 80 / 100 % usage.
+2. Show one decimal place when usage is under 10 %.
+3. Optional: launch at login, sparkline of history.
 
 ## Privacy
 

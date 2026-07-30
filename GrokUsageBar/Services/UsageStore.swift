@@ -49,15 +49,10 @@ final class UsageStore: ObservableObject {
 
         let session: GrokSession
         do {
-            session = try GrokAuthStore.loadSession()
+            session = try await GrokAuthStore.validSession()
             sessionEmail = session.email
-            if let exp = session.expiresAt, exp < Date().addingTimeInterval(-60) {
-                // Soft check: still try; live API may reject.
-            }
         } catch let error as GrokAuthError {
-            state = error == .authFileMissing || error == .noSession
-                ? .needsLogin
-                : .failed(error.localizedDescription)
+            state = Self.mapAuthError(error)
             return
         } catch {
             state = .failed(error.localizedDescription)
@@ -67,22 +62,41 @@ final class UsageStore: ObservableObject {
         do {
             let usage = try await billing.fetchUsage(session: session)
             state = .loaded(usage)
+        } catch let error as BillingServiceError where error == .unauthorized {
+            // Access token rejected: force one OIDC refresh and retry once.
+            do {
+                let renewed = try await GrokAuthStore.validSession(forceRefresh: true)
+                sessionEmail = renewed.email
+                let usage = try await billing.fetchUsage(session: renewed)
+                state = .loaded(usage)
+            } catch let error as GrokAuthError {
+                state = Self.mapAuthError(error)
+            } catch {
+                state = .failed(error.localizedDescription)
+            }
         } catch {
             state = .failed(error.localizedDescription)
         }
     }
 
     func openBillingPage() {
-        // Same destination Grok Build suggests for OAuth accounts.
         if let url = URL(string: "https://grok.com/?_s=billing") {
             NSWorkspace.shared.open(url)
         }
     }
 
     func openLoginHint() {
-        // No GUI login yet — point at the CLI.
         if let url = URL(string: "https://grok.com") {
             NSWorkspace.shared.open(url)
+        }
+    }
+
+    private static func mapAuthError(_ error: GrokAuthError) -> UsageLoadState {
+        switch error {
+        case .authFileMissing, .noSession, .tokenExpired, .refreshUnavailable:
+            return .needsLogin
+        default:
+            return .failed(error.localizedDescription)
         }
     }
 
