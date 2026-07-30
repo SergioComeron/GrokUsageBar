@@ -113,6 +113,8 @@ struct LiveBillingService: BillingServing {
         let includedUsed = latestHistory?.includedUsed?.val
         let onDemandUsed = latestHistory?.onDemandUsed?.val
         let totalUsed = config.used?.val ?? latestHistory?.totalUsed?.val
+        let periodStart = config.billingPeriodStart.flatMap(Self.parseDate)
+        let periodEnd = config.billingPeriodEnd.flatMap(Self.parseDate)
 
         return BillingUsage(
             creditUsagePercent: percent,
@@ -122,11 +124,60 @@ struct LiveBillingService: BillingServing {
             prepaidBalance: nil,
             onDemandCap: config.onDemandCap?.val,
             onDemandUsed: onDemandUsed,
-            billingPeriodStart: config.billingPeriodStart.flatMap(Self.parseDate),
-            billingPeriodEnd: config.billingPeriodEnd.flatMap(Self.parseDate),
+            billingPeriodStart: periodStart,
+            billingPeriodEnd: periodEnd,
             isUnifiedBillingUser: nil,
+            history: Self.buildHistory(
+                remote: config.history ?? [],
+                currentUsed: used,
+                periodStart: periodStart
+            ),
             fetchedAt: Date()
         )
+    }
+
+    /// Past cycles (API is newest-first) plus the current period, oldest → newest.
+    private static func buildHistory(
+        remote: [RemoteBillingHistory],
+        currentUsed: Double,
+        periodStart: Date?
+    ) -> [UsageHistoryPoint] {
+        var points: [UsageHistoryPoint] = remote.compactMap { row in
+            guard let year = row.billingCycle?.year, let month = row.billingCycle?.month else {
+                return nil
+            }
+            return UsageHistoryPoint(
+                year: year,
+                month: month,
+                totalUsed: row.totalUsed?.val ?? row.includedUsed?.val ?? 0,
+                isCurrent: false
+            )
+        }
+        // API lists newest first → chronological for the sparkline.
+        points.sort { lhs, rhs in
+            if lhs.year != rhs.year { return lhs.year < rhs.year }
+            return lhs.month < rhs.month
+        }
+
+        if let periodStart {
+            let cal = Calendar(identifier: .gregorian)
+            let year = cal.component(.year, from: periodStart)
+            let month = cal.component(.month, from: periodStart)
+            // Drop a history row that already represents this month, then append current.
+            points.removeAll { $0.year == year && $0.month == month }
+            points.append(
+                UsageHistoryPoint(
+                    year: year,
+                    month: month,
+                    totalUsed: currentUsed,
+                    isCurrent: true
+                )
+            )
+        } else if !points.isEmpty {
+            // No period start: treat the last (newest after sort) as current if needed.
+        }
+
+        return points
     }
 
     private static func parseDate(_ raw: String) -> Date? {
@@ -209,10 +260,33 @@ struct MockBillingService: BillingServing {
     func fetchUsage(session: GrokSession) async throws -> BillingUsage {
         try await Task.sleep(nanoseconds: delayNanoseconds)
         let now = Date()
+        let cal = Calendar(identifier: .gregorian)
+        let year = cal.component(.year, from: now)
+        let month = cal.component(.month, from: now)
+        let currentUsed = percent * 10
+        var history: [UsageHistoryPoint] = []
+        for offset in [3, 2, 1] {
+            var comps = DateComponents()
+            comps.year = year
+            comps.month = month - offset
+            if let date = cal.date(from: comps) {
+                history.append(
+                    UsageHistoryPoint(
+                        year: cal.component(.year, from: date),
+                        month: cal.component(.month, from: date),
+                        totalUsed: Double([120, 450, 280][offset - 1]),
+                        isCurrent: false
+                    )
+                )
+            }
+        }
+        history.append(
+            UsageHistoryPoint(year: year, month: month, totalUsed: currentUsed, isCurrent: true)
+        )
         return BillingUsage(
             creditUsagePercent: percent,
-            includedUsed: percent * 10,
-            totalUsed: percent * 10,
+            includedUsed: currentUsed,
+            totalUsed: currentUsed,
             monthlyLimit: 1000,
             prepaidBalance: nil,
             onDemandCap: 0,
@@ -220,6 +294,7 @@ struct MockBillingService: BillingServing {
             billingPeriodStart: Calendar.current.date(byAdding: .day, value: -12, to: now),
             billingPeriodEnd: Calendar.current.date(byAdding: .day, value: 18, to: now),
             isUnifiedBillingUser: true,
+            history: history,
             fetchedAt: now
         )
     }

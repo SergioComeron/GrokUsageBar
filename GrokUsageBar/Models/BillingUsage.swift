@@ -8,6 +8,28 @@
 
 import Foundation
 
+/// One billing cycle in the usage history (typically a calendar month).
+struct UsageHistoryPoint: Equatable, Sendable, Identifiable {
+    var year: Int
+    var month: Int
+    var totalUsed: Double
+    var isCurrent: Bool
+
+    var id: String { "\(year)-\(month)-\(isCurrent ? "c" : "h")" }
+
+    /// Short label like "Jul".
+    var monthLabel: String {
+        var comps = DateComponents()
+        comps.year = year
+        comps.month = month
+        comps.day = 1
+        guard let date = Calendar(identifier: .gregorian).date(from: comps) else {
+            return String(format: "%02d", month)
+        }
+        return date.formatted(.dateTime.month(.abbreviated))
+    }
+}
+
 /// Snapshot of account credit usage for the current billing period.
 struct BillingUsage: Equatable, Sendable {
     /// 0…100 — same idea as `creditUsagePercent` in Grok Build.
@@ -21,6 +43,8 @@ struct BillingUsage: Equatable, Sendable {
     var billingPeriodStart: Date?
     var billingPeriodEnd: Date?
     var isUnifiedBillingUser: Bool?
+    /// Past cycles (and usually the current one last), oldest → newest.
+    var history: [UsageHistoryPoint]
     /// When this snapshot was fetched locally.
     var fetchedAt: Date
 
@@ -35,6 +59,7 @@ struct BillingUsage: Equatable, Sendable {
         billingPeriodStart: nil,
         billingPeriodEnd: nil,
         isUnifiedBillingUser: nil,
+        history: [],
         fetchedAt: .distantPast
     )
 
@@ -54,6 +79,11 @@ struct BillingUsage: Equatable, Sendable {
         case ..<80: return .warn
         default: return .high
         }
+    }
+
+    /// Values for the sparkline, oldest → newest.
+    var sparklineValues: [Double] {
+        history.map(\.totalUsed)
     }
 }
 

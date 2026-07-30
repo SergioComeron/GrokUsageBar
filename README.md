@@ -72,6 +72,7 @@ Displayed percent = `used.val / monthlyLimit.val * 100`.
 | Finer percent under 10% | Done |
 | Notifications at 80/100 % | Done |
 | Open at login (`SMAppService`) | Done |
+| History sparkline | Done |
 
 ## Layout
 
@@ -116,9 +117,11 @@ macOS may list it under *System Settings → General → Login Items*. Use the
 built `.app` (e.g. under `build/Build/Products/Debug/`) so the login item
 points at a real bundle path.
 
-## Next steps
+## History sparkline
 
-1. Optional: sparkline of billing history.
+The panel shows a compact bar chart of past billing cycles plus the current
+period (from the API `history` array and live `used` value). Hover a bar for
+the month total.
 
 ## Privacy
 

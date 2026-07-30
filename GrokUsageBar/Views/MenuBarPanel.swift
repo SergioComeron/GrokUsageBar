@@ -106,6 +106,13 @@ struct MenuBarPanel: View {
 
             grid(usage)
 
+            if usage.history.count >= 2 {
+                SparklineView(
+                    points: usage.history,
+                    barColor: color(for: usage.usageLevel)
+                )
+            }
+
             Text("Updated \(usage.fetchedAt, style: .relative) ago")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
