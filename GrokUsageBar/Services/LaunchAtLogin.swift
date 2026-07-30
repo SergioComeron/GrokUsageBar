@@ -9,9 +9,16 @@ import Foundation
 import ServiceManagement
 
 enum LaunchAtLogin {
-    /// Whether the system currently has this app registered to open at login.
+    /// Whether the user has asked the app to open at login.
+    /// Includes `.requiresApproval` so the toggle stays on while macOS waits
+    /// for Login Items approval in System Settings.
     static var isEnabled: Bool {
-        SMAppService.mainApp.status == .enabled
+        switch SMAppService.mainApp.status {
+        case .enabled, .requiresApproval:
+            return true
+        default:
+            return false
+        }
     }
 
     /// Human-readable status for Settings.

@@ -3,6 +3,7 @@
 //  GrokUsageBar
 //
 
+import AppKit
 import SwiftUI
 
 struct SettingsView: View {
@@ -11,20 +12,29 @@ struct SettingsView: View {
     @State private var launchAtLoginMessage: String?
     @State private var launchAtLoginDetail = LaunchAtLogin.statusDescription
 
+    /// System accent so ON switches light up even in LSUIElement / dark Settings windows.
+    private var switchTint: Color {
+        Color(nsColor: .controlAccentColor)
+    }
+
     var body: some View {
         Form {
             Section("General") {
-                Toggle("Open at login", isOn: $launchAtLogin)
-                    .onChange(of: launchAtLogin) { _, newValue in
-                        if let error = LaunchAtLogin.setEnabled(newValue) {
-                            launchAtLoginMessage = error
-                            // Re-sync UI with system state after failure.
-                            launchAtLogin = LaunchAtLogin.isEnabled
-                        } else {
-                            launchAtLoginMessage = nil
-                        }
-                        launchAtLoginDetail = LaunchAtLogin.statusDescription
+                Toggle(isOn: $launchAtLogin) {
+                    Text("Open at login")
+                }
+                .toggleStyle(.switch)
+                .tint(switchTint)
+                .onChange(of: launchAtLogin) { _, newValue in
+                    if let error = LaunchAtLogin.setEnabled(newValue) {
+                        launchAtLoginMessage = error
+                        // Re-sync UI with system state after failure.
+                        launchAtLogin = LaunchAtLogin.isEnabled
+                    } else {
+                        launchAtLoginMessage = nil
                     }
+                    launchAtLoginDetail = LaunchAtLogin.statusDescription
+                }
                 Text(launchAtLoginDetail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -46,7 +56,11 @@ struct SettingsView: View {
             }
 
             Section("Notifications") {
-                Toggle("Alert at 80% and 100%", isOn: $store.notificationsEnabled)
+                Toggle(isOn: $store.notificationsEnabled) {
+                    Text("Alert at 80% and 100%")
+                }
+                .toggleStyle(.switch)
+                .tint(switchTint)
                 Text("Fires once per billing period for each threshold. Requires notification permission in System Settings.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
