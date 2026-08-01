@@ -18,7 +18,7 @@ struct MenuBarPanel: View {
             footer
         }
         .padding(14)
-        .frame(width: 280)
+        .frame(width: 300)
     }
 
     private var header: some View {
@@ -41,6 +41,16 @@ struct MenuBarPanel: View {
                 }
             }
             Spacer()
+            if let plan = store.usage?.subscription {
+                Text(plan.displayName)
+                    .font(.caption2.weight(.semibold))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.purple.opacity(0.15))
+                    .foregroundStyle(.purple)
+                    .clipShape(Capsule())
+                    .help(plan.rawTier.map { "JWT tier \($0)" } ?? plan.displayName)
+            }
             if store.isMockData {
                 Text("MOCK")
                     .font(.caption2.weight(.semibold))
@@ -91,20 +101,90 @@ struct MenuBarPanel: View {
 
     private func usageBlock(_ usage: BillingUsage) -> some View {
         VStack(alignment: .leading, spacing: 10) {
+            // Primary: weekly (or period) limit — same number as CLI /usage.
             HStack(alignment: .firstTextBaseline) {
                 Text(usage.percentDisplay)
                     .font(.system(size: 36, weight: .semibold, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(color(for: usage.usageLevel))
-                Text("of period")
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(usage.periodKind.titleLabel)
+                        .font(.subheadline.weight(.medium))
+                    Text("of \(usage.periodKind.shortLabel)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
+            }
+
+            if let plan = usage.subscription {
+                row("Plan", plan.displayName)
             }
 
             ProgressView(value: min(max(usage.creditUsagePercent, 0), 100), total: 100)
                 .tint(color(for: usage.usageLevel))
 
-            grid(usage)
+            // Personal 7-day window from xAI (not Mon–Sun). Show range + countdown.
+            if usage.periodRangeDisplay != nil || usage.nextResetDisplay != nil {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(usage.periodKind == .weekly ? "Your week" : "Period")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    if let range = usage.periodRangeDisplay {
+                        row("Window", range)
+                    }
+                    if let rel = usage.resetInDisplay {
+                        row("Resets", rel)
+                    }
+                    if let abs = usage.nextResetDisplay {
+                        row("At", abs)
+                    }
+                    if usage.periodKind == .weekly {
+                        Text("Rolling 7 days from your account — not the calendar week.")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(.top, 2)
+            }
+
+            if !usage.productUsage.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("By product")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    ForEach(usage.productUsage.sorted { $0.usagePercent > $1.usagePercent }) { item in
+                        HStack {
+                            Text(item.displayName)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text(BillingUsage.formatPercent(item.usagePercent))
+                                .monospacedDigit()
+                        }
+                        .font(.caption)
+                    }
+                }
+                .padding(.top, 2)
+            }
+
+            // Secondary: monthly credit units (pool), when the API still exposes it.
+            if let used = usage.monthlyUsed, let limit = usage.monthlyLimit, limit > 0 {
+                Divider().padding(.vertical, 2)
+                let monthPct = (used / limit) * 100
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Monthly credits")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    row("Used", formatUnits(used) + " / " + formatUnits(limit)
+                        + "  (\(BillingUsage.formatPercent(monthPct)))")
+                }
+            }
+
+            if let cap = usage.onDemandCap, cap > 0 {
+                let onDemand = usage.onDemandUsed ?? 0
+                row("On-demand", formatUnits(onDemand) + " / " + formatUnits(cap))
+            }
 
             if usage.history.count >= 2 {
                 SparklineView(
@@ -117,28 +197,6 @@ struct MenuBarPanel: View {
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
-    }
-
-    @ViewBuilder
-    private func grid(_ usage: BillingUsage) -> some View {
-        VStack(spacing: 4) {
-            if let used = usage.totalUsed, let limit = usage.monthlyLimit {
-                row("Used", formatUnits(used) + " / " + formatUnits(limit))
-            } else if let used = usage.totalUsed {
-                row("Used", formatUnits(used))
-            }
-            if let cap = usage.onDemandCap, cap > 0 {
-                let onDemand = usage.onDemandUsed ?? 0
-                row("On-demand", formatUnits(onDemand) + " / " + formatUnits(cap))
-            }
-            if let start = usage.billingPeriodStart, let end = usage.billingPeriodEnd {
-                row(
-                    "Period",
-                    "\(start.formatted(date: .abbreviated, time: .omitted)) – \(end.formatted(date: .abbreviated, time: .omitted))"
-                )
-            }
-        }
-        .font(.caption)
     }
 
     /// Billing vals look like credit units (e.g. 15000 monthly); show without currency noise.
@@ -156,7 +214,9 @@ struct MenuBarPanel: View {
             Spacer()
             Text(value)
                 .monospacedDigit()
+                .multilineTextAlignment(.trailing)
         }
+        .font(.caption)
     }
 
     private var footer: some View {

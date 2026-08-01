@@ -53,7 +53,7 @@ enum UsageNotifier {
             await post(
                 id: "grok-usage-critical-\(periodKey)",
                 title: "Grok usage exhausted",
-                body: "You've used \(usage.percentDisplay) of this period's credits."
+                body: "You've used \(usage.percentDisplay) of your \(usage.periodKind.titleLabel.lowercased())."
             )
             firedCritical = true
             firedWarn = true
@@ -63,7 +63,7 @@ enum UsageNotifier {
             await post(
                 id: "grok-usage-warn-\(periodKey)",
                 title: "Grok usage high",
-                body: "You've used \(usage.percentDisplay) of this period's credits."
+                body: "You've used \(usage.percentDisplay) of your \(usage.periodKind.titleLabel.lowercased())."
             )
             firedWarn = true
             UserDefaults.standard.set(true, forKey: Keys.firedWarn)

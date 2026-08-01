@@ -2,8 +2,11 @@
 //  BillingService.swift
 //  GrokUsageBar
 //
-//  Same source Grok Build uses for /usage:
-//  GET https://cli-chat-proxy.grok.com/v1/billing
+//  Same sources Grok Build uses for /usage:
+//
+//  1) GET …/v1/billing?format=credits  → weekly creditUsagePercent (what counts)
+//  2) GET …/v1/billing                 → monthly unit pool (secondary)
+//
 //  Authorization: Bearer <token from ~/.grok/auth.json>
 //
 
@@ -40,17 +43,43 @@ enum BillingServiceError: LocalizedError, Equatable {
 
 /// Real billing client matching Grok Build's /usage data source.
 struct LiveBillingService: BillingServing {
-    static let defaultEndpoint = URL(string: "https://cli-chat-proxy.grok.com/v1/billing")!
+    /// Weekly limit + product breakdown (primary).
+    static let creditsEndpoint = URL(string: "https://cli-chat-proxy.grok.com/v1/billing?format=credits")!
+    /// Monthly unit pool (secondary).
+    static let monthlyEndpoint = URL(string: "https://cli-chat-proxy.grok.com/v1/billing")!
 
-    var endpoint: URL = defaultEndpoint
+    /// Override for tests / env (`GROK_BILLING_ENDPOINT` still supported as credits URL).
+    var creditsURL: URL = creditsEndpoint
+    var monthlyURL: URL = monthlyEndpoint
     var urlSession: URLSession = .shared
 
     func fetchUsage(session: GrokSession) async throws -> BillingUsage {
-        var request = URLRequest(url: endpoint)
+        // Weekly is required; monthly is best-effort in parallel.
+        async let creditsData = fetchData(from: creditsURL, session: session)
+        async let monthlyData = optionalFetchData(from: monthlyURL, session: session)
+
+        let credits = try await creditsData
+        let monthly = await monthlyData
+
+        var usage = try Self.decode(credits: credits, monthly: monthly)
+        // Plan name: prefer API fields if present, else JWT `tier` claim.
+        if usage.subscription == nil {
+            usage.subscription = GrokSubscriptionPlan.resolve(jwtTier: session.jwtSubscriptionTier)
+        } else if usage.subscription?.rawTier == nil, let t = session.jwtSubscriptionTier {
+            usage.subscription = GrokSubscriptionPlan.resolve(
+                jwtTier: t,
+                apiDisplayName: usage.subscription?.displayName
+            )
+        }
+        return usage
+    }
+
+    private func fetchData(from url: URL, session: GrokSession) async throws -> Data {
+        var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
-        request.setValue("GrokUsageBar/0.1", forHTTPHeaderField: "User-Agent")
+        request.setValue("GrokUsageBar/0.2", forHTTPHeaderField: "User-Agent")
         request.timeoutInterval = 20
 
         let (data, response): (Data, URLResponse)
@@ -69,33 +98,84 @@ struct LiveBillingService: BillingServing {
         guard (200...299).contains(http.statusCode) else {
             throw BillingServiceError.badResponse(http.statusCode)
         }
-
-        return try Self.decode(data)
+        return data
     }
 
-    /// Parse the cli-chat-proxy billing payload.
-    ///
-    /// Example:
-    /// ```json
-    /// {
-    ///   "config": {
-    ///     "monthlyLimit": { "val": 15000 },
-    ///     "used": { "val": 103 },
-    ///     "onDemandCap": { "val": 0 },
-    ///     "billingPeriodStart": "2026-07-01T00:00:00+00:00",
-    ///     "billingPeriodEnd": "2026-08-01T00:00:00+00:00",
-    ///     "history": [ ... ]
-    ///   }
-    /// }
-    /// ```
-    static func decode(_ data: Data) throws -> BillingUsage {
-        let root: RemoteBillingRoot
+    private func optionalFetchData(from url: URL, session: GrokSession) async -> Data? {
+        try? await fetchData(from: url, session: session)
+    }
+
+    // MARK: - Decode
+
+    /// Primary payload from `?format=credits` (weekly). Optional monthly units from plain `/billing`.
+    static func decode(credits: Data, monthly: Data?) throws -> BillingUsage {
+        let root: RemoteCreditsRoot
         do {
-            root = try JSONDecoder().decode(RemoteBillingRoot.self, from: data)
+            root = try JSONDecoder().decode(RemoteCreditsRoot.self, from: credits)
         } catch {
+            // Fallback: maybe the caller only has the legacy monthly shape.
+            if let monthlyOnly = try? decodeLegacyMonthlyOnly(credits) {
+                return monthlyOnly
+            }
             throw BillingServiceError.decodeFailed
         }
 
+        let config = root.config
+        let percent = config.creditUsagePercent ?? 0
+        let periodKind = UsagePeriodKind.parse(config.currentPeriod?.type)
+            ?? (config.currentPeriod != nil ? .weekly : .unknown)
+
+        let periodStart = (config.currentPeriod?.start ?? config.billingPeriodStart)
+            .flatMap(Self.parseDate)
+        let periodEnd = (config.currentPeriod?.end ?? config.billingPeriodEnd)
+            .flatMap(Self.parseDate)
+
+        let products = (config.productUsage ?? []).map {
+            ProductUsageShare(product: $0.product ?? "?", usagePercent: $0.usagePercent ?? 0)
+        }
+
+        var monthlyUsed: Double?
+        var monthlyLimit: Double?
+        var history: [UsageHistoryPoint] = []
+        if let monthly, let monthlyRoot = try? JSONDecoder().decode(RemoteMonthlyRoot.self, from: monthly) {
+            monthlyUsed = monthlyRoot.config.used?.val
+            monthlyLimit = monthlyRoot.config.monthlyLimit?.val
+            history = buildHistory(
+                remote: monthlyRoot.config.history ?? [],
+                currentUsed: monthlyUsed ?? 0,
+                periodStart: monthlyRoot.config.billingPeriodStart.flatMap(Self.parseDate)
+            )
+        }
+
+        let subscription = GrokSubscriptionPlan.resolve(
+            jwtTier: nil,
+            apiDisplayName: config.subscriptionTierDisplay,
+            apiTierKey: config.subscriptionTier
+        )
+
+        return BillingUsage(
+            creditUsagePercent: percent,
+            periodKind: periodKind,
+            includedUsed: nil,
+            totalUsed: monthlyUsed,
+            monthlyLimit: monthlyLimit,
+            monthlyUsed: monthlyUsed,
+            prepaidBalance: config.prepaidBalance?.val,
+            onDemandCap: config.onDemandCap?.val,
+            onDemandUsed: config.onDemandUsed?.val,
+            billingPeriodStart: periodStart,
+            billingPeriodEnd: periodEnd,
+            isUnifiedBillingUser: config.isUnifiedBillingUser,
+            subscription: subscription,
+            productUsage: products,
+            history: history,
+            fetchedAt: Date()
+        )
+    }
+
+    /// Old shape: `{ config: { monthlyLimit, used, history, … } }` without creditUsagePercent.
+    private static func decodeLegacyMonthlyOnly(_ data: Data) throws -> BillingUsage {
+        let root = try JSONDecoder().decode(RemoteMonthlyRoot.self, from: data)
         let config = root.config
         let used = config.used?.val ?? 0
         let limit = config.monthlyLimit?.val ?? 0
@@ -107,27 +187,24 @@ struct LiveBillingService: BillingServing {
         } else {
             percent = 0
         }
-
-        // Prefer current-period fields; fall back to newest history entry.
-        let latestHistory = config.history?.first
-        let includedUsed = latestHistory?.includedUsed?.val
-        let onDemandUsed = latestHistory?.onDemandUsed?.val
-        let totalUsed = config.used?.val ?? latestHistory?.totalUsed?.val
         let periodStart = config.billingPeriodStart.flatMap(Self.parseDate)
         let periodEnd = config.billingPeriodEnd.flatMap(Self.parseDate)
-
         return BillingUsage(
             creditUsagePercent: percent,
-            includedUsed: includedUsed ?? totalUsed,
-            totalUsed: totalUsed,
+            periodKind: .monthly,
+            includedUsed: used,
+            totalUsed: used,
             monthlyLimit: limit > 0 ? limit : nil,
+            monthlyUsed: used,
             prepaidBalance: nil,
             onDemandCap: config.onDemandCap?.val,
-            onDemandUsed: onDemandUsed,
+            onDemandUsed: nil,
             billingPeriodStart: periodStart,
             billingPeriodEnd: periodEnd,
             isUnifiedBillingUser: nil,
-            history: Self.buildHistory(
+            subscription: nil,
+            productUsage: [],
+            history: buildHistory(
                 remote: config.history ?? [],
                 currentUsed: used,
                 periodStart: periodStart
@@ -153,7 +230,6 @@ struct LiveBillingService: BillingServing {
                 isCurrent: false
             )
         }
-        // API lists newest first → chronological for the sparkline.
         points.sort { lhs, rhs in
             if lhs.year != rhs.year { return lhs.year < rhs.year }
             return lhs.month < rhs.month
@@ -163,7 +239,6 @@ struct LiveBillingService: BillingServing {
             let cal = Calendar(identifier: .gregorian)
             let year = cal.component(.year, from: periodStart)
             let month = cal.component(.month, from: periodStart)
-            // Drop a history row that already represents this month, then append current.
             points.removeAll { $0.year == year && $0.month == month }
             points.append(
                 UsageHistoryPoint(
@@ -173,8 +248,6 @@ struct LiveBillingService: BillingServing {
                     isCurrent: true
                 )
             )
-        } else if !points.isEmpty {
-            // No period start: treat the last (newest after sort) as current if needed.
         }
 
         return points
@@ -186,13 +259,45 @@ struct LiveBillingService: BillingServing {
     }
 }
 
-// MARK: - Remote JSON
+// MARK: - Remote JSON (format=credits)
 
-private struct RemoteBillingRoot: Decodable {
-    let config: RemoteBillingConfig
+private struct RemoteCreditsRoot: Decodable {
+    let config: RemoteCreditsConfig
 }
 
-private struct RemoteBillingConfig: Decodable {
+private struct RemoteCreditsConfig: Decodable {
+    let currentPeriod: RemoteCurrentPeriod?
+    let creditUsagePercent: Double?
+    let onDemandCap: RemoteVal?
+    let onDemandUsed: RemoteVal?
+    let productUsage: [RemoteProductUsage]?
+    let isUnifiedBillingUser: Bool?
+    let prepaidBalance: RemoteVal?
+    let billingPeriodStart: String?
+    let billingPeriodEnd: String?
+    /// Present on some billing payloads / future API versions.
+    let subscriptionTier: String?
+    let subscriptionTierDisplay: String?
+}
+
+private struct RemoteCurrentPeriod: Decodable {
+    let type: String?
+    let start: String?
+    let end: String?
+}
+
+private struct RemoteProductUsage: Decodable {
+    let product: String?
+    let usagePercent: Double?
+}
+
+// MARK: - Remote JSON (plain monthly)
+
+private struct RemoteMonthlyRoot: Decodable {
+    let config: RemoteMonthlyConfig
+}
+
+private struct RemoteMonthlyConfig: Decodable {
     let monthlyLimit: RemoteVal?
     let used: RemoteVal?
     let onDemandCap: RemoteVal?
@@ -237,6 +342,16 @@ private struct RemoteVal: Decodable {
     private enum CodingKeys: String, CodingKey { case val }
 }
 
+private extension UsagePeriodKind {
+    static func parse(_ raw: String?) -> UsagePeriodKind? {
+        guard let raw else { return nil }
+        let upper = raw.uppercased()
+        if upper.contains("WEEKLY") { return .weekly }
+        if upper.contains("MONTHLY") { return .monthly }
+        return nil
+    }
+}
+
 private extension ISO8601DateFormatter {
     static let grok: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
@@ -254,47 +369,34 @@ private extension ISO8601DateFormatter {
 // MARK: - Mock (previews / offline demos)
 
 struct MockBillingService: BillingServing {
-    var percent: Double = 37
+    var percent: Double = 46
     var delayNanoseconds: UInt64 = 200_000_000
 
     func fetchUsage(session: GrokSession) async throws -> BillingUsage {
         try await Task.sleep(nanoseconds: delayNanoseconds)
         let now = Date()
-        let cal = Calendar(identifier: .gregorian)
-        let year = cal.component(.year, from: now)
-        let month = cal.component(.month, from: now)
-        let currentUsed = percent * 10
-        var history: [UsageHistoryPoint] = []
-        for offset in [3, 2, 1] {
-            var comps = DateComponents()
-            comps.year = year
-            comps.month = month - offset
-            if let date = cal.date(from: comps) {
-                history.append(
-                    UsageHistoryPoint(
-                        year: cal.component(.year, from: date),
-                        month: cal.component(.month, from: date),
-                        totalUsed: Double([120, 450, 280][offset - 1]),
-                        isCurrent: false
-                    )
-                )
-            }
-        }
-        history.append(
-            UsageHistoryPoint(year: year, month: month, totalUsed: currentUsed, isCurrent: true)
-        )
+        let weekStart = Calendar.current.date(byAdding: .day, value: -3, to: now)!
+        let weekEnd = Calendar.current.date(byAdding: .day, value: 4, to: now)!
         return BillingUsage(
             creditUsagePercent: percent,
-            includedUsed: currentUsed,
-            totalUsed: currentUsed,
-            monthlyLimit: 1000,
-            prepaidBalance: nil,
+            periodKind: .weekly,
+            includedUsed: nil,
+            totalUsed: 120,
+            monthlyLimit: 15_000,
+            monthlyUsed: 120,
+            prepaidBalance: 0,
             onDemandCap: 0,
             onDemandUsed: 0,
-            billingPeriodStart: Calendar.current.date(byAdding: .day, value: -12, to: now),
-            billingPeriodEnd: Calendar.current.date(byAdding: .day, value: 18, to: now),
+            billingPeriodStart: weekStart,
+            billingPeriodEnd: weekEnd,
             isUnifiedBillingUser: true,
-            history: history,
+            subscription: GrokSubscriptionPlan.resolve(jwtTier: 1),
+            productUsage: [
+                ProductUsageShare(product: "GrokBuild", usagePercent: percent * 0.9),
+                ProductUsageShare(product: "GrokChat", usagePercent: percent * 0.05),
+                ProductUsageShare(product: "GrokImagine", usagePercent: percent * 0.05),
+            ],
+            history: [],
             fetchedAt: now
         )
     }
@@ -309,13 +411,14 @@ enum BillingServiceFactory {
             || UserDefaults.standard.bool(forKey: "useMockBilling") {
             return MockBillingService()
         }
+        // Custom credits endpoint override (full URL, may include ?format=credits).
         if let raw = UserDefaults.standard.string(forKey: "billingEndpoint"),
            let url = URL(string: raw), !raw.isEmpty {
-            return LiveBillingService(endpoint: url)
+            return LiveBillingService(creditsURL: url)
         }
         if let raw = ProcessInfo.processInfo.environment["GROK_BILLING_ENDPOINT"],
            let url = URL(string: raw), !raw.isEmpty {
-            return LiveBillingService(endpoint: url)
+            return LiveBillingService(creditsURL: url)
         }
         return LiveBillingService()
     }

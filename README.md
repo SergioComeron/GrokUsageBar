@@ -1,10 +1,10 @@
 # GrokUsageBar
 
-Menubar utility for macOS that shows **Grok Build credit usage %** — the same idea as the in-app `/usage` (alias `/cost`) command.
+Menubar utility for macOS that shows **Grok Build weekly usage %** — the same number as the in-app `/usage` (alias `/cost`) **Weekly limit**.
 
 ```
-Barra:  [logo] 0.7%
-Clic:   detalle del periodo · Refresh · Billing… · Settings… · Quit
+Barra:  [logo] 46% wk
+Clic:   plan · weekly limit · ventana 7 días · productos · créditos mensuales
 ```
 
 ## Requirements
@@ -18,7 +18,7 @@ Clic:   detalle del periodo · Refresh · Billing… · Settings… · Quit
 Signed **Release** build → `/Applications`, then open:
 
 ```bash
-cd /Users/sergiocomeron/projects/GrokUsageBar
+cd /path/to/GrokUsageBar
 ./install.sh
 ```
 
@@ -26,6 +26,23 @@ Then in the menu panel → **Settings…** → enable **Open at login**.
 
 Requires Xcode and your Apple Development certificate. The project uses
 team `6PUHQ5CYQS` (override with `DEVELOPMENT_TEAM=… ./install.sh` if needed).
+
+### Releases on GitHub
+
+Tagged builds are published under [Releases](https://github.com/SergioComeron/GrokUsageBar/releases).
+
+From a clean tree with the version already bumped in Xcode:
+
+```bash
+./scripts/release.sh          # builds, tags vX.Y.Z, uploads .zip via gh
+./scripts/release.sh --dry-run
+```
+
+The script reads `MARKETING_VERSION` from the Xcode project (currently **0.2.0**).
+
+> **Note:** Builds are signed with **Apple Development**. On another Mac you may
+> need right-click → Open the first time, or a **Developer ID** + notarization
+> for smoother Gatekeeper.
 
 ## Develop
 
@@ -41,68 +58,77 @@ no Dock icon, only the menu bar.
 
 | Goal | What you need |
 |---|---|
-| Run on **your** Mac | **Apple Development** (you already have this) + `./install.sh` |
-| Share .app with others / fewer Gatekeeper prompts | **Developer ID Application** cert + **notarization** (`notarytool`) |
-| Mac App Store | **Apple Distribution** + App Store Connect (different pipeline) |
-
-You currently have Development identities installed. For Developer ID:
-
-1. [developer.apple.com](https://developer.apple.com/account/resources/certificates/list) → Certificates → **Developer ID Application**
-2. Install the cert in Keychain
-3. Archive/sign Release with that identity and submit with `xcrun notarytool`
+| Run on **your** Mac | **Apple Development** + `./install.sh` |
+| Share .app with others / fewer Gatekeeper prompts | **Developer ID Application** + **notarization** |
+| Mac App Store | **Apple Distribution** + App Store Connect |
 
 ## Data source (same as `/usage`)
 
+**Primary (weekly limit — what gates usage):**
+
 ```http
-GET https://cli-chat-proxy.grok.com/v1/billing
+GET https://cli-chat-proxy.grok.com/v1/billing?format=credits
 Authorization: Bearer <token from ~/.grok/auth.json>
 ```
-
-Example response (fields abbreviated):
 
 ```json
 {
   "config": {
-    "monthlyLimit": { "val": 15000 },
-    "used": { "val": 103 },
-    "onDemandCap": { "val": 0 },
-    "billingPeriodStart": "2026-07-01T00:00:00+00:00",
-    "billingPeriodEnd": "2026-08-01T00:00:00+00:00",
-    "history": [ … ]
+    "currentPeriod": {
+      "type": "USAGE_PERIOD_TYPE_WEEKLY",
+      "start": "…",
+      "end": "…"
+    },
+    "creditUsagePercent": 46.0,
+    "productUsage": [
+      { "product": "GrokBuild", "usagePercent": 41.0 }
+    ]
   }
 }
 ```
 
-Displayed percent = `used.val / monthlyLimit.val * 100`.
+Displayed **weekly** percent = `creditUsagePercent`. The window is a **rolling 7 days** from your account, not Mon–Sun.
+
+**Secondary (monthly credit units):**
+
+```http
+GET https://cli-chat-proxy.grok.com/v1/billing
+```
+
+**Plan name (SuperGrok / Heavy / …):** best-effort from the OAuth JWT claim `tier`
+(and optional billing fields if the API starts sending them).
 
 ## What’s implemented
 
 | Piece | Status |
 |---|---|
 | `MenuBarExtra` label + panel | Done |
-| Read `~/.grok/auth.json` | Done |
-| Live billing API | Done |
-| Mock fallback (`GROK_USAGE_MOCK=1`) | Done |
-| OIDC token refresh (writes back to auth.json) | Done |
-| Grok logo in menubar | Done |
-| Finer percent under 10% | Done |
+| Weekly limit (`?format=credits`) | Done |
+| Period range + “resets in N days” | Done |
+| Product breakdown (Build / Chat / …) | Done |
+| Monthly units (secondary) | Done |
+| Subscription plan badge (JWT `tier`) | Done |
+| Read `~/.grok/auth.json` + OIDC refresh | Done |
 | Notifications at 80/100 % | Done |
 | Open at login (`SMAppService`) | Done |
-| History sparkline | Done |
+| History sparkline (monthly) | Done |
+| GitHub releases (`scripts/release.sh`) | Done |
 
 ## Layout
 
 ```
 GrokUsageBar/
 ├── GrokUsageBar.xcodeproj
+├── install.sh
+├── scripts/release.sh
 ├── README.md
 └── GrokUsageBar/
-    ├── GrokUsageBarApp.swift      # MenuBarExtra + Settings
+    ├── GrokUsageBarApp.swift
     ├── Models/BillingUsage.swift
     ├── Services/
-    │   ├── GrokAuthStore.swift    # ~/.grok/auth.json
-    │   ├── BillingService.swift   # Mock + Live
-    │   ├── UsageStore.swift       # poll + state
+    │   ├── GrokAuthStore.swift
+    │   ├── BillingService.swift
+    │   ├── UsageStore.swift
     │   ├── UsageNotifier.swift
     │   └── LaunchAtLogin.swift
     ├── Views/
@@ -110,7 +136,7 @@ GrokUsageBar/
     │   ├── MenuBarPanel.swift
     │   └── SettingsView.swift
     ├── Assets.xcassets
-    └── GrokUsageBar.entitlements  # sandbox OFF (reads home auth file)
+    └── GrokUsageBar.entitlements
 ```
 
 ## Auth refresh
@@ -122,22 +148,8 @@ and updates `key`, `refresh_token` and `expires_at` in `~/.grok/auth.json`
 
 ## Notifications
 
-When enabled (default), crossing **80%** or **100%** posts a local notification
-once per billing period. Toggle in Settings. macOS may ask for notification
-permission on first launch.
-
-## Open at login
-
-Settings → **Open at login** registers the app with `SMAppService.mainApp`.
-macOS may list it under *System Settings → General → Login Items*. Use the
-built `.app` (e.g. under `build/Build/Products/Debug/`) so the login item
-points at a real bundle path.
-
-## History sparkline
-
-The panel shows a compact bar chart of past billing cycles plus the current
-period (from the API `history` array and live `used` value). Hover a bar for
-the month total.
+When enabled (default), crossing **80%** or **100%** of the **weekly** limit
+posts a local notification once per period. Toggle in Settings.
 
 ## Privacy
 

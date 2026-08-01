@@ -16,3 +16,7 @@ xcuserdata/
 .swiftpm/
 .builds/
 Package.resolved
+
+# Release artifacts
+dist/
+build/

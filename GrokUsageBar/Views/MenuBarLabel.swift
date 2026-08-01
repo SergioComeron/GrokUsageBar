@@ -27,7 +27,8 @@ struct MenuBarLabel: View {
     private var labelText: String {
         switch store.state {
         case .loaded(let usage):
-            return usage.percentDisplay
+            // Weekly limit is the number that gates real usage (same as /usage).
+            return usage.menuBarDisplay
         case .loading:
             return "…"
         case .needsLogin:
@@ -43,7 +44,15 @@ struct MenuBarLabel: View {
         switch store.state {
         case .loaded(let usage):
             let mock = store.isMockData ? " (mock)" : ""
-            return "Grok usage \(usage.percentDisplay)\(mock)"
+            var parts: [String] = []
+            if let plan = usage.subscription {
+                parts.append(plan.displayName)
+            }
+            parts.append("\(usage.periodKind.titleLabel) \(usage.percentDisplay)\(mock)")
+            if let summary = usage.periodSummaryDisplay {
+                parts.append(summary)
+            }
+            return parts.joined(separator: " · ")
         case .loading:
             return "Refreshing Grok usage…"
         case .needsLogin:

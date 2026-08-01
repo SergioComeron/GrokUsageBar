@@ -26,6 +26,29 @@ struct GrokSession: Equatable, Sendable {
         guard let expiresAt else { return true }
         return expiresAt.timeIntervalSinceNow <= skew
     }
+
+    /// Subscription tier claim from the OAuth access JWT (`tier`), when present.
+    /// xAI encodes plan level as an integer (e.g. 1 ≈ SuperGrok).
+    var jwtSubscriptionTier: Int? {
+        Self.jwtPayload(accessToken)?["tier"] as? Int
+            ?? (Self.jwtPayload(accessToken)?["tier"] as? Double).map(Int.init)
+            ?? (Self.jwtPayload(accessToken)?["tier"] as? String).flatMap(Int.init)
+    }
+
+    /// Unverified JWT payload (header.payload.sig) — only used for non-sensitive display claims.
+    private static func jwtPayload(_ token: String) -> [String: Any]? {
+        let parts = token.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count >= 2 else { return nil }
+        var b64 = String(parts[1])
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        let pad = (4 - b64.count % 4) % 4
+        if pad > 0 { b64.append(String(repeating: "=", count: pad)) }
+        guard let data = Data(base64Encoded: b64),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        return obj
+    }
 }
 
 enum GrokAuthError: LocalizedError, Equatable {
