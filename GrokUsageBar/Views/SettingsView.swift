@@ -78,9 +78,25 @@ struct SettingsView: View {
                 }
                 if let email = store.sessionEmail {
                     LabeledContent("Account", value: email)
+                    Button("Sign out") {
+                        store.signOut()
+                    }
                 } else {
-                    Text("No session — run grok login")
+                    Text("No session")
                         .foregroundStyle(.secondary)
+                    Button("Sign in with Grok") {
+                        store.startLogin()
+                    }
+                    if case .waiting(let userCode, _) = store.loginProgress {
+                        Text("Code: \(userCode)")
+                            .font(.caption.monospaced())
+                            .textSelection(.enabled)
+                    }
+                    if case .failed(let message) = store.loginProgress {
+                        Text(message)
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
                 }
             }
 
@@ -95,7 +111,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 420, height: 430)
+        .frame(width: 420, height: 480)
         .padding()
         .onAppear {
             launchAtLogin = LaunchAtLogin.isEnabled

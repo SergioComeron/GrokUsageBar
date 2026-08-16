@@ -56,7 +56,7 @@ struct MenuBarLabel: View {
         case .loading:
             return "Refreshing Grok usage…"
         case .needsLogin:
-            return "Sign in with grok login"
+            return "Sign in with Grok"
         case .failed(let message):
             return message
         case .idle:

@@ -10,14 +10,14 @@ Clic:   plan · weekly limit · ventana 7 días · productos · créditos mensua
 ## Requirements
 
 - macOS 14+
-- A Grok Build login (`grok login`) so `~/.grok/auth.json` exists. The TUI does **not** need to stay open — only the session file.
+- A Grok account. Sign in from the menu bar (**Sign in with Grok**) or with `grok login`. The TUI does **not** need to be installed or left open.
 
 ## Install (anyone)
 
 1. Download **`GrokUsageBar-*-macos.zip`** from [Releases](https://github.com/SergioComeron/GrokUsageBar/releases/latest).
 2. Unzip and move `GrokUsageBar.app` to **Applications**.
 3. Open it. Releases from **0.2.2** are **Developer ID + notarized**; Gatekeeper should accept a double-click.
-4. If the bar says there is no session, run `grok login` once in a terminal.
+4. If the bar says there is no session, click **Sign in with Grok** and finish in the browser. (`grok login` still works if you prefer.)
 
 Then in the menu panel → **Settings…** → enable **Open at login** if you want it at boot.
 
@@ -38,7 +38,7 @@ even if you toggled the switch from an Xcode Debug build.
 
 ### Cut a GitHub release
 
-From a clean tree with `MARKETING_VERSION` already bumped in Xcode (currently **0.2.2**):
+From a clean tree with `MARKETING_VERSION` already bumped in Xcode (currently **0.2.3**):
 
 ```bash
 ./scripts/release.sh          # build + Developer ID + notarize + tag + GitHub zip
@@ -123,6 +123,7 @@ GET https://cli-chat-proxy.grok.com/v1/billing
 | Product breakdown (Build / Chat / …) | Done |
 | Monthly units (secondary) | Done |
 | Subscription plan badge (JWT `tier`) | Done |
+| In-app Grok sign-in (device code) | Done |
 | Read `~/.grok/auth.json` + OIDC refresh | Done |
 | Notifications at 80/100 % | Done |
 | Open at login (`/Applications` LaunchAgent, never Debug) | Done |
@@ -142,6 +143,7 @@ GrokUsageBar/
     ├── Models/BillingUsage.swift
     ├── Services/
     │   ├── GrokAuthStore.swift
+    │   ├── GrokDeviceLogin.swift
     │   ├── BillingService.swift
     │   ├── UsageStore.swift
     │   ├── UsageNotifier.swift

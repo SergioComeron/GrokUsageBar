@@ -76,13 +76,7 @@ struct MenuBarPanel: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
         case .needsLogin:
-            VStack(alignment: .leading, spacing: 8) {
-                Label("No Grok session", systemImage: "person.crop.circle.badge.exclamationmark")
-                    .foregroundStyle(.secondary)
-                Text("Run `grok login` in a terminal, then refresh.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            loginBlock
 
         case .failed(let message):
             VStack(alignment: .leading, spacing: 6) {
@@ -96,6 +90,67 @@ struct MenuBarPanel: View {
 
         case .loaded(let usage):
             usageBlock(usage)
+        }
+    }
+
+    @ViewBuilder
+    private var loginBlock: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("No Grok session", systemImage: "person.crop.circle.badge.exclamationmark")
+                .foregroundStyle(.secondary)
+
+            switch store.loginProgress {
+            case .idle:
+                Text("Sign in with your Grok account. Grok Build does not need to be open.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("Sign in with Grok") {
+                    store.startLogin()
+                }
+                .keyboardShortcut("l", modifiers: .command)
+
+            case .starting:
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Starting sign-in…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+            case .waiting(let userCode, let url):
+                Text("Finish in the browser that just opened. If it didn’t, use this code at accounts.x.ai.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(userCode)
+                    .font(.title3.monospaced().weight(.semibold))
+                    .textSelection(.enabled)
+                HStack {
+                    Button("Open browser again") {
+                        NSWorkspace.shared.open(url)
+                    }
+                    Button("Cancel") {
+                        store.cancelLogin()
+                    }
+                }
+
+            case .finishing:
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Saving session…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+            case .failed(let message):
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Try again") {
+                    store.startLogin()
+                }
+            }
         }
     }
 

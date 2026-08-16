@@ -20,6 +20,8 @@ struct GrokSession: Equatable, Sendable {
     var oidcIssuer: String?
     var oidcClientId: String?
     var authMode: String?
+    var givenName: String?
+    var familyName: String?
 
     /// True when the access token is missing an expiry or expires within `skew` seconds.
     func isExpiring(within skew: TimeInterval = 300) -> Bool {
@@ -30,13 +32,13 @@ struct GrokSession: Equatable, Sendable {
     /// Subscription tier claim from the OAuth access JWT (`tier`), when present.
     /// xAI encodes plan level as an integer (e.g. 1 ≈ SuperGrok).
     var jwtSubscriptionTier: Int? {
-        Self.jwtPayload(accessToken)?["tier"] as? Int
-            ?? (Self.jwtPayload(accessToken)?["tier"] as? Double).map(Int.init)
-            ?? (Self.jwtPayload(accessToken)?["tier"] as? String).flatMap(Int.init)
+        Self.unverifiedJWTPayload(accessToken)?["tier"] as? Int
+            ?? (Self.unverifiedJWTPayload(accessToken)?["tier"] as? Double).map(Int.init)
+            ?? (Self.unverifiedJWTPayload(accessToken)?["tier"] as? String).flatMap(Int.init)
     }
 
     /// Unverified JWT payload (header.payload.sig) — only used for non-sensitive display claims.
-    private static func jwtPayload(_ token: String) -> [String: Any]? {
+    static func unverifiedJWTPayload(_ token: String) -> [String: Any]? {
         let parts = token.split(separator: ".", omittingEmptySubsequences: false)
         guard parts.count >= 2 else { return nil }
         var b64 = String(parts[1])
@@ -59,23 +61,29 @@ enum GrokAuthError: LocalizedError, Equatable {
     case malformedAuthFile
     case refreshUnavailable
     case refreshFailed(String)
+    case loginFailed(String)
+    case loginCancelled
 
     var errorDescription: String? {
         switch self {
         case .authFileMissing:
-            return "No Grok session found. Run `grok login` first."
+            return "No Grok session. Sign in from the menu."
         case .authFileUnreadable:
             return "Could not read ~/.grok/auth.json."
         case .noSession:
             return "auth.json has no usable session."
         case .tokenExpired:
-            return "Grok session expired. Run `grok login` again."
+            return "Grok session expired. Sign in again."
         case .malformedAuthFile:
             return "auth.json is not in the expected format."
         case .refreshUnavailable:
-            return "Session has no refresh token. Run `grok login` again."
+            return "Session has no refresh token. Sign in again."
         case .refreshFailed(let message):
             return "Could not refresh Grok session: \(message)"
+        case .loginFailed(let message):
+            return message
+        case .loginCancelled:
+            return "Sign-in cancelled."
         }
     }
 }
@@ -112,7 +120,9 @@ enum GrokAuthStore {
                 teamId: entry["team_id"] as? String,
                 oidcIssuer: entry["oidc_issuer"] as? String,
                 oidcClientId: entry["oidc_client_id"] as? String,
-                authMode: entry["auth_mode"] as? String
+                authMode: entry["auth_mode"] as? String,
+                givenName: entry["first_name"] as? String,
+                familyName: entry["last_name"] as? String
             )
         }
 
@@ -222,6 +232,44 @@ enum GrokAuthStore {
 
     // MARK: - Persistence
 
+    /// Write a full session (in-app login). Merges into existing auth.json.
+    static func saveSession(_ session: GrokSession, to url: URL = authFileURL) throws {
+        var root: [String: Any] = [:]
+        if FileManager.default.fileExists(atPath: url.path) {
+            root = (try? readRoot(from: url)) ?? [:]
+        }
+        var entry = (root[session.entryKey] as? [String: Any]) ?? [:]
+        if entry["create_time"] == nil {
+            entry["create_time"] = ISO8601DateFormatter.grokFractional.string(from: Date())
+        }
+        entry["auth_mode"] = session.authMode ?? "oidc"
+        entry["key"] = session.accessToken
+        entry["refresh_token"] = session.refreshToken ?? ""
+        if let expiresAt = session.expiresAt {
+            entry["expires_at"] = ISO8601DateFormatter.grokFractional.string(from: expiresAt)
+        }
+        entry["oidc_issuer"] = session.oidcIssuer ?? GrokDeviceLogin.issuer
+        entry["oidc_client_id"] = session.oidcClientId ?? GrokDeviceLogin.clientID
+        if let email = session.email { entry["email"] = email }
+        if let userId = session.userId {
+            entry["user_id"] = userId
+            entry["principal_id"] = userId
+            entry["principal_type"] = "User"
+        }
+        if let teamId = session.teamId { entry["team_id"] = teamId }
+        if let given = session.givenName { entry["first_name"] = given }
+        if let family = session.familyName { entry["last_name"] = family }
+        root[session.entryKey] = entry
+
+        let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
+        try atomicWrite(data, to: url, mode: 0o600)
+    }
+
+    /// Same as `grok logout`: drop the cached session file.
+    static func signOut(from url: URL = authFileURL) {
+        try? FileManager.default.removeItem(at: url)
+    }
+
     /// Update only token fields on the existing entry; keep everything else intact.
     private static func persistTokens(
         entryKey: String,
@@ -261,6 +309,11 @@ enum GrokAuthStore {
 
     private static func atomicWrite(_ data: Data, to url: URL, mode: UInt16) throws {
         let dir = url.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: NSNumber(value: 0o700)],
+            ofItemAtPath: dir.path
+        )
         let temp = dir.appendingPathComponent(".auth.json.\(UUID().uuidString).tmp")
         do {
             try data.write(to: temp, options: .withoutOverwriting)
@@ -268,8 +321,11 @@ enum GrokAuthStore {
                 [.posixPermissions: NSNumber(value: mode)],
                 ofItemAtPath: temp.path
             )
-            // replaceItemAt is atomic on the same volume.
-            _ = try FileManager.default.replaceItemAt(url, withItemAt: temp)
+            if FileManager.default.fileExists(atPath: url.path) {
+                _ = try FileManager.default.replaceItemAt(url, withItemAt: temp)
+            } else {
+                try FileManager.default.moveItem(at: temp, to: url)
+            }
             try? FileManager.default.setAttributes(
                 [.posixPermissions: NSNumber(value: mode)],
                 ofItemAtPath: url.path

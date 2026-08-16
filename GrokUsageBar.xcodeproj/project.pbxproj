@@ -19,6 +19,7 @@
 		A1000000000000000000000B /* UsageNotifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000B /* UsageNotifier.swift */; };
 		A1000000000000000000000C /* LaunchAtLogin.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000C /* LaunchAtLogin.swift */; };
 		A1000000000000000000000D /* SparklineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000D /* SparklineView.swift */; };
+		A1000000000000000000000E /* GrokDeviceLogin.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000E /* GrokDeviceLogin.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -35,6 +36,7 @@
 		B1000000000000000000000B /* UsageNotifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageNotifier.swift; sourceTree = "<group>"; };
 		B1000000000000000000000C /* LaunchAtLogin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchAtLogin.swift; sourceTree = "<group>"; };
 		B1000000000000000000000D /* SparklineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SparklineView.swift; sourceTree = "<group>"; };
+		B1000000000000000000000E /* GrokDeviceLogin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrokDeviceLogin.swift; sourceTree = "<group>"; };
 		C10000000000000000000001 /* GrokUsageBar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GrokUsageBar.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -94,6 +96,7 @@
 				B10000000000000000000005 /* UsageStore.swift */,
 				B1000000000000000000000B /* UsageNotifier.swift */,
 				B1000000000000000000000C /* LaunchAtLogin.swift */,
+				B1000000000000000000000E /* GrokDeviceLogin.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -189,6 +192,7 @@
 				A10000000000000000000007 /* MenuBarPanel.swift in Sources */,
 				A10000000000000000000008 /* SettingsView.swift in Sources */,
 				A1000000000000000000000D /* SparklineView.swift in Sources */,
+				A1000000000000000000000E /* GrokDeviceLogin.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -235,7 +239,7 @@
 				CODE_SIGN_ENTITLEMENTS = GrokUsageBar/GrokUsageBar.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 5;
 				DEVELOPMENT_TEAM = 6PUHQ5CYQS;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -248,7 +252,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.2.2;
+				MARKETING_VERSION = 0.2.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.sergiocomeron.GrokUsageBar;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -263,7 +267,7 @@
 				CODE_SIGN_ENTITLEMENTS = GrokUsageBar/GrokUsageBar.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 5;
 				DEVELOPMENT_TEAM = 6PUHQ5CYQS;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -276,7 +280,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.2.2;
+				MARKETING_VERSION = 0.2.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.sergiocomeron.GrokUsageBar;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
