@@ -20,3 +20,6 @@ Package.resolved
 # Release artifacts
 dist/
 build/
+
+# Developer ID private key / CSR / exported .p12 (never commit)
+certs/

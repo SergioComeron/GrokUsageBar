@@ -11,6 +11,11 @@ import SwiftUI
 struct GrokUsageBarApp: App {
     @StateObject private var usageStore = UsageStore()
 
+    init() {
+        // Pin login to /Applications even if this process is a Debug/Xcode build.
+        LaunchAtLogin.reconcileOnLaunch()
+    }
+
     var body: some Scene {
         MenuBarExtra {
             MenuBarPanel()

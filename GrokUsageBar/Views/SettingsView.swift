@@ -38,6 +38,11 @@ struct SettingsView: View {
                 Text(launchAtLoginDetail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if !LaunchAtLogin.isRunningFromCanonicalInstall {
+                    Text("This is not the /Applications copy. Login still starts /Applications/GrokUsageBar.app.")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
                 if let launchAtLoginMessage {
                     Text(launchAtLoginMessage)
                         .font(.caption)
@@ -90,7 +95,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 420, height: 400)
+        .frame(width: 420, height: 430)
         .padding()
         .onAppear {
             launchAtLogin = LaunchAtLogin.isEnabled

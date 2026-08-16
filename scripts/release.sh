@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Build Release, tag vX.Y.Z from MARKETING_VERSION, and create a GitHub release
-# with a zip of GrokUsageBar.app.
+# Build Release, Developer ID + notarize, tag vX.Y.Z, GitHub release.
 #
 # Usage:
-#   ./scripts/release.sh              # full release
-#   ./scripts/release.sh --dry-run    # build + zip only, no tag/push/gh
-#   ./scripts/release.sh --skip-build # reuse existing Release .app
+#   ./scripts/release.sh                 # full release (always notarized)
+#   ./scripts/release.sh --dry-run       # notarized zip only, no tag/push/gh
+#   ./scripts/release.sh --skip-build    # reuse existing Release .app, then notarize
+#   ./scripts/release.sh --skip-notarize # emergency: zip without Apple notary
 #
-# Requires: xcodebuild (Xcode), gh (authenticated), clean git tree (except dry-run).
+# Requires: Developer ID in Keychain, notarytool profile GrokUsageBar-notary,
+# xcodebuild, gh (except dry-run), clean git tree (except dry-run).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -17,13 +18,15 @@ DERIVED="${ROOT}/build"
 TEAM_ID="${DEVELOPMENT_TEAM:-6PUHQ5CYQS}"
 DRY_RUN=0
 SKIP_BUILD=0
+SKIP_NOTARIZE=0
 
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=1 ;;
     --skip-build) SKIP_BUILD=1 ;;
+    --skip-notarize) SKIP_NOTARIZE=1 ;;
     -h|--help)
-      sed -n '2,12p' "$0"
+      sed -n '2,14p' "$0"
       exit 0
       ;;
     *)
@@ -52,7 +55,8 @@ fi
 TAG="v${VERSION}"
 SRC="${DERIVED}/Build/Products/Release/${APP_NAME}.app"
 DIST="${ROOT}/dist"
-ZIP="${DIST}/${APP_NAME}-${VERSION}-macos.zip"
+ZIP_NOTARIZED="${DIST}/${APP_NAME}-${VERSION}-macos-notarized.zip"
+ZIP_PLAIN="${DIST}/${APP_NAME}-${VERSION}-macos.zip"
 
 echo "→ Version ${VERSION}  tag ${TAG}"
 
@@ -72,31 +76,49 @@ if [[ "${DRY_RUN}" -eq 0 ]]; then
   fi
 fi
 
-if [[ "${SKIP_BUILD}" -eq 0 ]]; then
-  echo "→ Building Release…"
-  xcodebuild \
-    -project "${ROOT}/${APP_NAME}.xcodeproj" \
-    -scheme "${APP_NAME}" \
-    -configuration Release \
-    -derivedDataPath "${DERIVED}" \
-    -destination 'platform=macOS' \
-    DEVELOPMENT_TEAM="${TEAM_ID}" \
-    CODE_SIGN_STYLE=Automatic \
-    build
+mkdir -p "${DIST}"
+
+if [[ "${SKIP_NOTARIZE}" -eq 0 ]]; then
+  echo "→ Notarizing (Developer ID + notarytool)…"
+  if [[ "${SKIP_BUILD}" -eq 1 ]]; then
+    "${ROOT}/scripts/notarize.sh" --skip-build
+  else
+    "${ROOT}/scripts/notarize.sh"
+  fi
+  ZIP="${ZIP_NOTARIZED}"
+  SIGNING_LINE="Developer ID Application + notarized (team ${TEAM_ID})"
+  INSTALL_GATEKEEPER="Open the app (Gatekeeper should accept it as notarized)."
 else
-  echo "→ Skipping build (using existing ${SRC})"
+  echo "warning: --skip-notarize set; zip will NOT be accepted by Gatekeeper on other Macs" >&2
+  if [[ "${SKIP_BUILD}" -eq 0 ]]; then
+    echo "→ Building Release (unsigned-for-distribution)…"
+    xcodebuild \
+      -project "${ROOT}/${APP_NAME}.xcodeproj" \
+      -scheme "${APP_NAME}" \
+      -configuration Release \
+      -derivedDataPath "${DERIVED}" \
+      -destination 'platform=macOS' \
+      DEVELOPMENT_TEAM="${TEAM_ID}" \
+      CODE_SIGN_STYLE=Automatic \
+      build
+  else
+    echo "→ Skipping build (using existing ${SRC})"
+  fi
+  if [[ ! -d "${SRC}" ]]; then
+    echo "error: missing ${SRC}" >&2
+    exit 1
+  fi
+  rm -f "${ZIP_PLAIN}"
+  ditto -c -k --sequesterRsrc --keepParent "${SRC}" "${ZIP_PLAIN}"
+  ZIP="${ZIP_PLAIN}"
+  SIGNING_LINE="Apple Development only (team ${TEAM_ID}) — not notarized"
+  INSTALL_GATEKEEPER="Right-click → Open the first time (this build is not notarized)."
 fi
 
-if [[ ! -d "${SRC}" ]]; then
-  echo "error: missing ${SRC}" >&2
+if [[ ! -f "${ZIP}" ]]; then
+  echo "error: missing zip ${ZIP}" >&2
   exit 1
 fi
-
-mkdir -p "${DIST}"
-rm -f "${ZIP}"
-echo "→ Zipping ${ZIP}"
-# ditto preserves code signature better than zip -r for macOS apps.
-ditto -c -k --sequesterRsrc --keepParent "${SRC}" "${ZIP}"
 
 NOTES="${DIST}/release-notes-${VERSION}.md"
 cat > "${NOTES}" <<EOF
@@ -112,14 +134,14 @@ Menubar usage for Grok Build — same weekly limit as \`/usage\`.
 - Monthly credit units as secondary info
 
 ### Install
-1. Download \`${APP_NAME}-${VERSION}-macos.zip\`
+1. Download \`$(basename "${ZIP}")\`
 2. Unzip → move \`${APP_NAME}.app\` to **Applications**
-3. Open once (right-click → Open if Gatekeeper blocks Development-signed builds)
+3. ${INSTALL_GATEKEEPER}
 4. Ensure you are logged in with \`grok login\`
 
 ### Build
 - Bundle ID: \`${BUNDLE_ID}\`
-- Signed with Apple Development (team \`${TEAM_ID}\`)
+- ${SIGNING_LINE}
 EOF
 
 if [[ "${DRY_RUN}" -eq 1 ]]; then

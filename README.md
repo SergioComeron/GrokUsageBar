@@ -9,40 +9,43 @@ Clic:   plan · weekly limit · ventana 7 días · productos · créditos mensua
 
 ## Requirements
 
-- macOS 14+ (built against Xcode 27 / macOS 27 SDK)
-- [Grok Build](https://grok.com) session via `grok login` → `~/.grok/auth.json`
-- Xcode (this machine has `/Applications/Xcode-beta.app`)
+- macOS 14+
+- A Grok Build login (`grok login`) so `~/.grok/auth.json` exists. The TUI does **not** need to stay open — only the session file.
 
-## Install (recommended, daily use)
+## Install (anyone)
 
-Signed **Release** build → `/Applications`, then open:
+1. Download **`GrokUsageBar-*-macos.zip`** from [Releases](https://github.com/SergioComeron/GrokUsageBar/releases/latest).
+2. Unzip and move `GrokUsageBar.app` to **Applications**.
+3. Open it. Releases from **0.2.2** are **Developer ID + notarized**; Gatekeeper should accept a double-click.
+4. If the bar says there is no session, run `grok login` once in a terminal.
+
+Then in the menu panel → **Settings…** → enable **Open at login** if you want it at boot.
+
+## Build from source (this Mac)
+
+Signed **Release** build → `/Applications`:
 
 ```bash
 cd /path/to/GrokUsageBar
 ./install.sh
 ```
 
-Then in the menu panel → **Settings…** → enable **Open at login**.
+Requires Xcode and your Apple Development certificate. Team `6PUHQ5CYQS`
+(override with `DEVELOPMENT_TEAM=… ./install.sh` if needed).
 
-Requires Xcode and your Apple Development certificate. The project uses
-team `6PUHQ5CYQS` (override with `DEVELOPMENT_TEAM=… ./install.sh` if needed).
+`./install.sh` always pins **Open at login** to `/Applications/GrokUsageBar.app`,
+even if you toggled the switch from an Xcode Debug build.
 
-### Releases on GitHub
+### Cut a GitHub release
 
-Tagged builds are published under [Releases](https://github.com/SergioComeron/GrokUsageBar/releases).
-
-From a clean tree with the version already bumped in Xcode:
+From a clean tree with `MARKETING_VERSION` already bumped in Xcode (currently **0.2.2**):
 
 ```bash
-./scripts/release.sh          # builds, tags vX.Y.Z, uploads .zip via gh
+./scripts/release.sh          # build + Developer ID + notarize + tag + GitHub zip
 ./scripts/release.sh --dry-run
 ```
 
-The script reads `MARKETING_VERSION` from the Xcode project (currently **0.2.0**).
-
-> **Note:** Builds are signed with **Apple Development**. On another Mac you may
-> need right-click → Open the first time, or a **Developer ID** + notarization
-> for smoother Gatekeeper.
+Every zip from `release.sh` is notarized unless you pass `--skip-notarize`.
 
 ## Develop
 
@@ -61,6 +64,18 @@ no Dock icon, only the menu bar.
 | Run on **your** Mac | **Apple Development** + `./install.sh` |
 | Share .app with others / fewer Gatekeeper prompts | **Developer ID Application** + **notarization** |
 | Mac App Store | **Apple Distribution** + App Store Connect |
+
+To hand the zip to someone else (no “unidentified developer” block):
+
+```bash
+./scripts/setup-signing.sh          # checks cert + notary profile
+./scripts/setup-signing.sh csr      # one-time: upload CSR at developer.apple.com
+./scripts/setup-signing.sh import ~/Downloads/developerID_application.cer
+./scripts/setup-signing.sh notary   # one-time: app-specific password
+./scripts/notarize.sh               # signed + notarized zip in dist/
+```
+
+Use team **6PUHQ5CYQS** (Sergio Comeron Sanchez-Paniagua), not the free Personal Team and not UDIMA. The private key stays in `certs/` (gitignored).
 
 ## Data source (same as `/usage`)
 
@@ -110,7 +125,7 @@ GET https://cli-chat-proxy.grok.com/v1/billing
 | Subscription plan badge (JWT `tier`) | Done |
 | Read `~/.grok/auth.json` + OIDC refresh | Done |
 | Notifications at 80/100 % | Done |
-| Open at login (`SMAppService`) | Done |
+| Open at login (`/Applications` LaunchAgent, never Debug) | Done |
 | History sparkline (monthly) | Done |
 | GitHub releases (`scripts/release.sh`) | Done |
 
