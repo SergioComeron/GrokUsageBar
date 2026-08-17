@@ -126,10 +126,13 @@ cat > "${NOTES}" <<EOF
 
 Menubar usage for Grok Build — same weekly limit as \`/usage\`.
 
+### What's new
+- SuperGrok Heavy shows as **Heavy**, not “Tier 5” (JWT \`tier\` 5)
+
 ### Highlights
 - **Weekly limit** from \`GET /v1/billing?format=credits\` (\`creditUsagePercent\`)
 - Rolling **7-day window** with range + “resets in N days”
-- **Plan** badge (SuperGrok / Heavy / … via JWT \`tier\`)
+- **Plan** badge (JWT \`tier\` 1 → SuperGrok, 5 → SuperGrok Heavy)
 - Product breakdown (Build, Chat, Imagine, …)
 - Monthly credit units as secondary info
 

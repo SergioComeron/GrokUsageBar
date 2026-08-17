@@ -16,7 +16,7 @@ enum GrokDeviceLogin {
     private static let deviceURL = URL(string: "https://auth.x.ai/oauth2/device/code")!
     private static let tokenURL = URL(string: "https://auth.x.ai/oauth2/token")!
     private static let userInfoURL = URL(string: "https://auth.x.ai/oauth2/userinfo")!
-    private static let userAgent = "GrokUsageBar/0.2.3"
+    private static let userAgent = "GrokUsageBar/0.2.4"
 
     struct Pending: Equatable, Sendable {
         var deviceCode: String

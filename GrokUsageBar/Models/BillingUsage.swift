@@ -72,7 +72,7 @@ enum UsagePeriodKind: String, Equatable, Sendable {
 }
 
 /// Plan inferred from OAuth JWT `tier` and/or billing fields.
-/// Marketing ladder used by Grok Build: Free / X Basic → SuperGrok → SuperGrok Heavy.
+/// Marketing ladder on x.ai/pricing: Free → Lite → SuperGrok → Plus → Heavy → Business → Enterprise.
 struct GrokSubscriptionPlan: Equatable, Sendable {
     /// Raw integer from JWT `tier` when available.
     var rawTier: Int?
@@ -82,7 +82,8 @@ struct GrokSubscriptionPlan: Equatable, Sendable {
     var shortBadge: String
 
     /// Best-effort map of JWT tier → product name.
-    /// Confirmed in the wild: tier 1 with SuperGrok-class limits (~15k monthly units).
+    /// Confirmed: 1 = SuperGrok; 5 = SuperGrok Heavy (this account). Billing `?format=credits`
+    /// does not currently send `subscriptionTier` / `subscriptionTierDisplay`.
     static func resolve(
         jwtTier: Int?,
         apiDisplayName: String? = nil,
@@ -108,7 +109,7 @@ struct GrokSubscriptionPlan: Equatable, Sendable {
         switch tier {
         case 0: name = "Free"
         case 1: name = "SuperGrok"
-        case 2: name = "SuperGrok Heavy"
+        case 2, 5: name = "SuperGrok Heavy"
         case 3: name = "Enterprise"
         default: name = "Tier \(tier)"
         }
@@ -122,6 +123,8 @@ struct GrokSubscriptionPlan: Equatable, Sendable {
     private static func prettyTierKey(_ key: String) -> String {
         let k = key.uppercased()
         if k.contains("HEAVY") { return "SuperGrok Heavy" }
+        if k.contains("PLUS") { return "SuperGrok Plus" }
+        if k.contains("LITE") { return "SuperGrok Lite" }
         if k.contains("SUPER") { return "SuperGrok" }
         if k.contains("BASIC") { return "X Basic" }
         if k.contains("FREE") { return "Free" }
@@ -134,6 +137,8 @@ struct GrokSubscriptionPlan: Equatable, Sendable {
     private static func shortBadge(forDisplay name: String, tier: Int?) -> String {
         let n = name.lowercased()
         if n.contains("heavy") { return "Heavy" }
+        if n.contains("plus") { return "Plus" }
+        if n.contains("lite") { return "Lite" }
         if n.contains("super") { return "SG" }
         if n.contains("basic") { return "Basic" }
         if n.contains("free") { return "Free" }

@@ -30,7 +30,7 @@ struct GrokSession: Equatable, Sendable {
     }
 
     /// Subscription tier claim from the OAuth access JWT (`tier`), when present.
-    /// xAI encodes plan level as an integer (e.g. 1 ≈ SuperGrok).
+    /// xAI encodes plan level as an integer (1 ≈ SuperGrok, 5 ≈ SuperGrok Heavy).
     var jwtSubscriptionTier: Int? {
         Self.unverifiedJWTPayload(accessToken)?["tier"] as? Int
             ?? (Self.unverifiedJWTPayload(accessToken)?["tier"] as? Double).map(Int.init)
