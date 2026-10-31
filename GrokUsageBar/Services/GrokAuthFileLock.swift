@@ -453,8 +453,11 @@ final class GrokAuthFileLock: @unchecked Sendable {
     private static func mtimeAge(fd: Int32) -> TimeInterval? {
         var info = stat()
         guard fstat(fd, &info) == 0 else { return nil }
+        // `st_mtime` is a C macro on both platforms, so Swift's imported
+        // `stat` does not have that member. Darwin stores it in
+        // `st_mtimespec`; glibc stores it in `st_mtim`.
         #if canImport(Darwin)
-        let modified = TimeInterval(info.st_mtime)
+        let modified = TimeInterval(info.st_mtimespec.tv_sec)
         #else
         let modified = TimeInterval(info.st_mtim.tv_sec)
         #endif
