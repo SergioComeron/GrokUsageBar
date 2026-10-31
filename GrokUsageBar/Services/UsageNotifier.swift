@@ -2,20 +2,22 @@
 //  UsageNotifier.swift
 //  GrokUsageBar
 //
-//  Local notifications when credit usage crosses 80% and 100%.
-//  Each threshold fires at most once per billing period (keyed by period start).
+//  Local notifications when credit usage crosses a configured threshold, and
+//  an optional pace alert when the projection hits 100% before the reset.
+//  Each alert fires at most once per billing period.
 //
 
 import Foundation
 import UserNotifications
 
 enum UsageNotifier {
-    static let warnThreshold: Double = 80
-    static let criticalThreshold: Double = 100
-
     private enum Keys {
         static let enabled = "notificationsEnabled"
+        static let thresholds = "alertThresholds"
+        static let paceEnabled = "paceAlertsEnabled"
         static let periodKey = "notifiedPeriodKey"
+        static let firedThresholds = "notifiedFiredThresholds"
+        static let firedPace = "notifiedFiredPace"
         static let firedWarn = "notifiedFiredWarn"
         static let firedCritical = "notifiedFiredCritical"
     }
@@ -28,6 +30,24 @@ enum UsageNotifier {
             return UserDefaults.standard.bool(forKey: Keys.enabled)
         }
         set { UserDefaults.standard.set(newValue, forKey: Keys.enabled) }
+    }
+
+    /// Empty means the user turned every threshold off. Missing key → 80 and 100.
+    static var enabledThresholds: Set<Int> {
+        get {
+            guard UserDefaults.standard.object(forKey: Keys.thresholds) != nil else {
+                return UsageAlertPolicy.defaultThresholds
+            }
+            return decodeThresholds(UserDefaults.standard.string(forKey: Keys.thresholds))
+        }
+        set {
+            UserDefaults.standard.set(encodeThresholds(newValue), forKey: Keys.thresholds)
+        }
+    }
+
+    static var paceAlertsEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: Keys.paceEnabled) }
+        set { UserDefaults.standard.set(newValue, forKey: Keys.paceEnabled) }
     }
 
     /// Ask the system for alert permission (no-op if already decided).
@@ -43,50 +63,57 @@ enum UsageNotifier {
         guard isEnabled else { return }
 
         let periodKey = periodIdentity(usage)
-        resetIfPeriodChanged(periodKey)
+        let (seedThresholds, seedPace) = UsageAlertPolicy.normalizedFired(
+            periodKey: periodKey,
+            storedPeriodKey: UserDefaults.standard.string(forKey: Keys.periodKey),
+            storedThresholds: decodeThresholds(UserDefaults.standard.string(forKey: Keys.firedThresholds)),
+            storedPace: UserDefaults.standard.bool(forKey: Keys.firedPace),
+            legacyWarn: UserDefaults.standard.bool(forKey: Keys.firedWarn),
+            legacyCritical: UserDefaults.standard.bool(forKey: Keys.firedCritical)
+        )
+        let decision = UsageAlertPolicy.evaluate(
+            percent: usage.creditUsagePercent,
+            pace: usage.pace(),
+            periodKey: periodKey,
+            periodLabel: usage.periodKind.titleLabel.lowercased(),
+            enabledThresholds: enabledThresholds,
+            paceAlertsEnabled: paceAlertsEnabled,
+            firedThresholds: seedThresholds,
+            firedPace: seedPace
+        )
 
-        let percent = usage.creditUsagePercent.clamped(to: 0...1000) // allow slight overshoot
-        var firedWarn = UserDefaults.standard.bool(forKey: Keys.firedWarn)
-        var firedCritical = UserDefaults.standard.bool(forKey: Keys.firedCritical)
+        UserDefaults.standard.set(periodKey, forKey: Keys.periodKey)
+        UserDefaults.standard.set(encodeThresholds(decision.firedThresholds), forKey: Keys.firedThresholds)
+        UserDefaults.standard.set(decision.firedPace, forKey: Keys.firedPace)
+        UserDefaults.standard.set(false, forKey: Keys.firedWarn)
+        UserDefaults.standard.set(false, forKey: Keys.firedCritical)
 
-        if percent >= criticalThreshold, !firedCritical {
-            await post(
-                id: "grok-usage-critical-\(periodKey)",
-                title: "Grok usage exhausted",
-                body: "You've used \(usage.percentDisplay) of your \(usage.periodKind.titleLabel.lowercased())."
-            )
-            firedCritical = true
-            firedWarn = true
-            UserDefaults.standard.set(true, forKey: Keys.firedCritical)
-            UserDefaults.standard.set(true, forKey: Keys.firedWarn)
-        } else if percent >= warnThreshold, !firedWarn {
-            await post(
-                id: "grok-usage-warn-\(periodKey)",
-                title: "Grok usage high",
-                body: "You've used \(usage.percentDisplay) of your \(usage.periodKind.titleLabel.lowercased())."
-            )
-            firedWarn = true
-            UserDefaults.standard.set(true, forKey: Keys.firedWarn)
+        for alert in decision.alerts {
+            await post(id: alert.identifier, title: alert.title, body: alert.body)
         }
     }
 
     // MARK: - Private
 
-    private static func periodIdentity(_ usage: BillingUsage) -> String {
+    static func periodIdentity(_ usage: BillingUsage) -> String {
         if let start = usage.billingPeriodStart {
-            return ISO8601DateFormatter.string(from: start, timeZone: TimeZone(secondsFromGMT: 0)!, formatOptions: [.withInternetDateTime])
+            return ISO8601DateFormatter.string(
+                from: start,
+                timeZone: TimeZone(secondsFromGMT: 0)!,
+                formatOptions: [.withInternetDateTime]
+            )
         }
-        // Fall back to calendar month so a missing start still resets monthly.
         let comps = Calendar.current.dateComponents([.year, .month], from: Date())
         return "\(comps.year ?? 0)-\(comps.month ?? 0)"
     }
 
-    private static func resetIfPeriodChanged(_ periodKey: String) {
-        let previous = UserDefaults.standard.string(forKey: Keys.periodKey)
-        guard previous != periodKey else { return }
-        UserDefaults.standard.set(periodKey, forKey: Keys.periodKey)
-        UserDefaults.standard.set(false, forKey: Keys.firedWarn)
-        UserDefaults.standard.set(false, forKey: Keys.firedCritical)
+    private static func encodeThresholds(_ values: Set<Int>) -> String {
+        values.sorted().map(String.init).joined(separator: ",")
+    }
+
+    private static func decodeThresholds(_ raw: String?) -> Set<Int> {
+        guard let raw, !raw.isEmpty else { return [] }
+        return Set(raw.split(separator: ",").compactMap { Int($0) })
     }
 
     private static func post(id: String, title: String, body: String) async {
@@ -109,11 +136,5 @@ enum UsageNotifier {
             trigger: nil // deliver immediately
         )
         try? await center.add(request)
-    }
-}
-
-private extension Comparable {
-    func clamped(to range: ClosedRange<Self>) -> Self {
-        min(max(self, range.lowerBound), range.upperBound)
     }
 }

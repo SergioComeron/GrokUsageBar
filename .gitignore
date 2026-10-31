@@ -12,8 +12,9 @@ xcuserdata/
 # macOS
 .DS_Store
 
-# SwiftPM (if added later)
+# SwiftPM
 .swiftpm/
+.build/
 .builds/
 Package.resolved
 

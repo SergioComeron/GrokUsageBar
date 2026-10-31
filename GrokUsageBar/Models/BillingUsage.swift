@@ -82,8 +82,12 @@ struct GrokSubscriptionPlan: Equatable, Sendable {
     var shortBadge: String
 
     /// Best-effort map of JWT tier → product name.
-    /// Confirmed: 1 = SuperGrok; 5 = SuperGrok Heavy (this account). Billing `?format=credits`
-    /// does not currently send `subscriptionTier` / `subscriptionTierDisplay`.
+    /// Confirmed from this account: 1 = SuperGrok, 5 = SuperGrok Heavy.
+    /// Billing `?format=credits` does not currently send `subscriptionTier` /
+    /// `subscriptionTierDisplay`.
+    /// Tier 2 is also labelled SuperGrok Heavy, but that mapping is unconfirmed:
+    /// nothing in the billing payload or in the CLI source we checked identifies
+    /// JWT tier 2. Leave the label until a real tier-2 token shows otherwise.
     static func resolve(
         jwtTier: Int?,
         apiDisplayName: String? = nil,
@@ -109,7 +113,10 @@ struct GrokSubscriptionPlan: Equatable, Sendable {
         switch tier {
         case 0: name = "Free"
         case 1: name = "SuperGrok"
-        case 2, 5: name = "SuperGrok Heavy"
+        case 5: name = "SuperGrok Heavy"
+        case 2:
+            // Unconfirmed. Same label as tier 5 until a captured tier-2 token says otherwise.
+            name = "SuperGrok Heavy"
         case 3: name = "Enterprise"
         default: name = "Tier \(tier)"
         }
@@ -250,6 +257,31 @@ struct BillingUsage: Equatable, Sendable {
         return "\(s) – \(e)"
     }
 
+    /// Pace against this account's window. Nil when the API didn't send start and end.
+    func pace(at now: Date = Date()) -> UsagePace? {
+        guard let start = billingPeriodStart, let end = billingPeriodEnd else { return nil }
+        return UsagePace.evaluate(
+            actualPercent: creditUsagePercent,
+            periodStart: start,
+            periodEnd: end,
+            now: now
+        )
+    }
+
+    /// Plain `/billing` currently returns zeros for the monthly pool. Hide that
+    /// placeholder instead of drawing "0 / 0" and a flat chart. A real limit
+    /// (non-zero `monthlyLimit`) still shows, even if this period's use is 0.
+    var monthlyFiguresAreAllZero: Bool {
+        let used = monthlyUsed ?? 0
+        let limit = monthlyLimit ?? 0
+        let historyZero = history.allSatisfy { $0.totalUsed == 0 }
+        return used == 0 && limit == 0 && historyZero
+    }
+
+    var showsHistoryChart: Bool {
+        !monthlyFiguresAreAllZero && history.count >= 2 && history.contains { $0.totalUsed > 0 }
+    }
+
     /// One-line summary for the panel footer / tooltip.
     /// e.g. “30 Jul – 6 Aug · resets in 5 days (6 Aug, 10:22)”.
     var periodSummaryDisplay: String? {
@@ -285,6 +317,8 @@ enum UsageLoadState: Equatable {
     case idle
     case loading
     case loaded(BillingUsage)
+    /// Last good snapshot. `nil` reason means a refresh is in flight; a string is the failure we're keeping on screen.
+    case stale(BillingUsage, String?)
     case failed(String)
     case needsLogin
 }

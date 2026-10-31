@@ -89,7 +89,9 @@ struct MenuBarPanel: View {
             }
 
         case .loaded(let usage):
-            usageBlock(usage)
+            usageBlock(usage, staleNote: nil)
+        case .stale(let usage, let reason):
+            usageBlock(usage, staleNote: reason ?? "Refreshing…")
         }
     }
 
@@ -154,8 +156,14 @@ struct MenuBarPanel: View {
         }
     }
 
-    private func usageBlock(_ usage: BillingUsage) -> some View {
+    private func usageBlock(_ usage: BillingUsage, staleNote: String?) -> some View {
         VStack(alignment: .leading, spacing: 10) {
+            if let staleNote {
+                Label(staleNote == "Refreshing…" ? staleNote : "Showing last value. \(staleNote)", systemImage: "clock.arrow.circlepath")
+                    .font(.caption)
+                    .foregroundStyle(staleNote == "Refreshing…" ? Color.secondary : Color.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             // Primary: weekly (or period) limit — same number as CLI /usage.
             HStack(alignment: .firstTextBaseline) {
                 Text(usage.percentDisplay)
@@ -204,6 +212,21 @@ struct MenuBarPanel: View {
                 .padding(.top, 2)
             }
 
+            if let pace = usage.pace() {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Pace")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text(pace.comparisonSentence)
+                        .font(.caption)
+                        .monospacedDigit()
+                    Text(pace.projectionSentence())
+                        .font(.caption)
+                        .foregroundStyle(pace.hitsBeforeReset ? Color.orange : Color.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
             if !usage.productUsage.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("By product")
@@ -223,8 +246,10 @@ struct MenuBarPanel: View {
                 .padding(.top, 2)
             }
 
-            // Secondary: monthly credit units (pool), when the API still exposes it.
-            if let used = usage.monthlyUsed, let limit = usage.monthlyLimit, limit > 0 {
+            // Secondary: monthly credit units. Hidden when the API's monthly
+            // payload is all zeros (that's what it returns today).
+            if !usage.monthlyFiguresAreAllZero,
+               let used = usage.monthlyUsed, let limit = usage.monthlyLimit, limit > 0 {
                 Divider().padding(.vertical, 2)
                 let monthPct = (used / limit) * 100
                 VStack(alignment: .leading, spacing: 4) {
@@ -241,7 +266,7 @@ struct MenuBarPanel: View {
                 row("On-demand", formatUnits(onDemand) + " / " + formatUnits(cap))
             }
 
-            if usage.history.count >= 2 {
+            if usage.showsHistoryChart {
                 SparklineView(
                     points: usage.history,
                     barColor: color(for: usage.usageLevel)
