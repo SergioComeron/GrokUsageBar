@@ -20,6 +20,11 @@
 		A1000000000000000000000C /* LaunchAtLogin.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000C /* LaunchAtLogin.swift */; };
 		A1000000000000000000000D /* SparklineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000D /* SparklineView.swift */; };
 		A1000000000000000000000E /* GrokDeviceLogin.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000E /* GrokDeviceLogin.swift */; };
+		A1000000000000000000000F /* GrokHTTP.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000F /* GrokHTTP.swift */; };
+		A10000000000000000000010 /* GrokAuthFileLock.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000010 /* GrokAuthFileLock.swift */; };
+		A10000000000000000000011 /* RefreshCoalescer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000011 /* RefreshCoalescer.swift */; };
+		A10000000000000000000012 /* UsageAlertPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000012 /* UsageAlertPolicy.swift */; };
+		A10000000000000000000013 /* UsagePace.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000013 /* UsagePace.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -37,6 +42,11 @@
 		B1000000000000000000000C /* LaunchAtLogin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchAtLogin.swift; sourceTree = "<group>"; };
 		B1000000000000000000000D /* SparklineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SparklineView.swift; sourceTree = "<group>"; };
 		B1000000000000000000000E /* GrokDeviceLogin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrokDeviceLogin.swift; sourceTree = "<group>"; };
+		B1000000000000000000000F /* GrokHTTP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrokHTTP.swift; sourceTree = "<group>"; };
+		B10000000000000000000010 /* GrokAuthFileLock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrokAuthFileLock.swift; sourceTree = "<group>"; };
+		B10000000000000000000011 /* RefreshCoalescer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RefreshCoalescer.swift; sourceTree = "<group>"; };
+		B10000000000000000000012 /* UsageAlertPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageAlertPolicy.swift; sourceTree = "<group>"; };
+		B10000000000000000000013 /* UsagePace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsagePace.swift; sourceTree = "<group>"; };
 		C10000000000000000000001 /* GrokUsageBar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GrokUsageBar.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -84,6 +94,7 @@
 			isa = PBXGroup;
 			children = (
 				B10000000000000000000002 /* BillingUsage.swift */,
+				B10000000000000000000013 /* UsagePace.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -92,6 +103,10 @@
 			isa = PBXGroup;
 			children = (
 				B10000000000000000000003 /* GrokAuthStore.swift */,
+				B10000000000000000000010 /* GrokAuthFileLock.swift */,
+				B1000000000000000000000F /* GrokHTTP.swift */,
+				B10000000000000000000011 /* RefreshCoalescer.swift */,
+				B10000000000000000000012 /* UsageAlertPolicy.swift */,
 				B10000000000000000000004 /* BillingService.swift */,
 				B10000000000000000000005 /* UsageStore.swift */,
 				B1000000000000000000000B /* UsageNotifier.swift */,
@@ -193,6 +208,11 @@
 				A10000000000000000000008 /* SettingsView.swift in Sources */,
 				A1000000000000000000000D /* SparklineView.swift in Sources */,
 				A1000000000000000000000E /* GrokDeviceLogin.swift in Sources */,
+				A1000000000000000000000F /* GrokHTTP.swift in Sources */,
+				A10000000000000000000010 /* GrokAuthFileLock.swift in Sources */,
+				A10000000000000000000011 /* RefreshCoalescer.swift in Sources */,
+				A10000000000000000000012 /* UsageAlertPolicy.swift in Sources */,
+				A10000000000000000000013 /* UsagePace.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

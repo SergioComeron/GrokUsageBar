@@ -11,6 +11,9 @@
 //
 
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 protocol BillingServing: Sendable {
     func fetchUsage(session: GrokSession) async throws -> BillingUsage
@@ -21,6 +24,7 @@ enum BillingServiceError: LocalizedError, Equatable {
     case unauthorized
     case badResponse(Int)
     case decodeFailed
+    case missingCreditUsagePercent
     case transport(String)
 
     var errorDescription: String? {
@@ -33,6 +37,8 @@ enum BillingServiceError: LocalizedError, Equatable {
             return "Billing API returned HTTP \(code)."
         case .decodeFailed:
             return "Could not parse billing response."
+        case .missingCreditUsagePercent:
+            return "Billing response did not include creditUsagePercent."
         case .transport(let message):
             return message
         }
@@ -63,11 +69,13 @@ struct LiveBillingService: BillingServing {
 
         var usage = try Self.decode(credits: credits, monthly: monthly)
         // Plan name: prefer API fields if present, else JWT `tier` claim.
+        // Decode the JWT once; the claim is display-only.
+        let jwtTier = session.jwtSubscriptionTier
         if usage.subscription == nil {
-            usage.subscription = GrokSubscriptionPlan.resolve(jwtTier: session.jwtSubscriptionTier)
-        } else if usage.subscription?.rawTier == nil, let t = session.jwtSubscriptionTier {
+            usage.subscription = GrokSubscriptionPlan.resolve(jwtTier: jwtTier)
+        } else if usage.subscription?.rawTier == nil, let jwtTier {
             usage.subscription = GrokSubscriptionPlan.resolve(
-                jwtTier: t,
+                jwtTier: jwtTier,
                 apiDisplayName: usage.subscription?.displayName
             )
         }
@@ -79,7 +87,7 @@ struct LiveBillingService: BillingServing {
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
-        request.setValue("GrokUsageBar/0.2", forHTTPHeaderField: "User-Agent")
+        request.setValue(GrokHTTP.userAgent, forHTTPHeaderField: "User-Agent")
         request.timeoutInterval = 20
 
         let (data, response): (Data, URLResponse)
@@ -121,7 +129,15 @@ struct LiveBillingService: BillingServing {
         }
 
         let config = root.config
-        let percent = config.creditUsagePercent ?? 0
+        // A missing or renamed field must not render as a real 0%. Explicit 0 is fine.
+        // Legacy monthly payloads (used / monthlyLimit, no credit fields) still decode below.
+        guard let percent = config.creditUsagePercent else {
+            if Self.isLegacyMonthlyPayload(credits),
+               let monthlyOnly = try? decodeLegacyMonthlyOnly(credits) {
+                return monthlyOnly
+            }
+            throw BillingServiceError.missingCreditUsagePercent
+        }
         let periodKind = UsagePeriodKind.parse(config.currentPeriod?.type)
             ?? (config.currentPeriod != nil ? .weekly : .unknown)
 
@@ -171,6 +187,19 @@ struct LiveBillingService: BillingServing {
             history: history,
             fetchedAt: Date()
         )
+    }
+
+    /// True for the pre-credits monthly document. A credits document that simply
+    /// dropped `creditUsagePercent` (it has `currentPeriod` / `productUsage`) is not legacy.
+    private static func isLegacyMonthlyPayload(_ data: Data) -> Bool {
+        guard
+            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let config = obj["config"] as? [String: Any]
+        else { return false }
+        if config["creditUsagePercent"] != nil { return false }
+        if config["currentPeriod"] != nil { return false }
+        if config["productUsage"] != nil { return false }
+        return config["monthlyLimit"] != nil || config["used"] != nil
     }
 
     /// Old shape: `{ config: { monthlyLimit, used, history, … } }` without creditUsagePercent.

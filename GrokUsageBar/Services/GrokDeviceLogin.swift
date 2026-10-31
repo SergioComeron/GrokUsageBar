@@ -7,6 +7,9 @@
 //
 
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 enum GrokDeviceLogin {
     static let issuer = "https://auth.x.ai"
@@ -16,7 +19,7 @@ enum GrokDeviceLogin {
     private static let deviceURL = URL(string: "https://auth.x.ai/oauth2/device/code")!
     private static let tokenURL = URL(string: "https://auth.x.ai/oauth2/token")!
     private static let userInfoURL = URL(string: "https://auth.x.ai/oauth2/userinfo")!
-    private static let userAgent = "GrokUsageBar/0.2.4"
+    private static var userAgent: String { GrokHTTP.userAgent }
 
     struct Pending: Equatable, Sendable {
         var deviceCode: String
@@ -76,7 +79,7 @@ enum GrokDeviceLogin {
 
             do {
                 let session = try await exchange(pending)
-                try GrokAuthStore.saveSession(session)
+                try await GrokAuthStore.saveSessionAsync(session)
                 return session
             } catch Exchange.pending {
                 continue

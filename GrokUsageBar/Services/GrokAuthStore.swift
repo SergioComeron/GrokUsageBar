@@ -2,11 +2,19 @@
 //  GrokAuthStore.swift
 //  GrokUsageBar
 //
-//  Reads Grok Build's cached OAuth session from ~/.grok/auth.json and refreshes
-//  it via the OIDC token endpoint (same grant the CLI uses).
+//  Reads the grok CLI session from ~/.grok/auth.json and refreshes it via the
+//  OIDC token endpoint (same grant the CLI uses).
+//
+//  Refresh takes `auth.json.lock` the way the CLI does and re-reads the file
+//  after the lock is held. If the CLI already rotated the refresh token, this
+//  process adopts that session instead of spending the same token again.
+//  Writes merge into the existing JSON so API keys and other accounts stay.
 //
 
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 struct GrokSession: Equatable, Sendable {
     /// Map key in auth.json (typically `issuer::client_id`).
@@ -32,9 +40,11 @@ struct GrokSession: Equatable, Sendable {
     /// Subscription tier claim from the OAuth access JWT (`tier`), when present.
     /// xAI encodes plan level as an integer (1 ≈ SuperGrok, 5 ≈ SuperGrok Heavy).
     var jwtSubscriptionTier: Int? {
-        Self.unverifiedJWTPayload(accessToken)?["tier"] as? Int
-            ?? (Self.unverifiedJWTPayload(accessToken)?["tier"] as? Double).map(Int.init)
-            ?? (Self.unverifiedJWTPayload(accessToken)?["tier"] as? String).flatMap(Int.init)
+        guard let tier = Self.unverifiedJWTPayload(accessToken)?["tier"] else { return nil }
+        if let value = tier as? Int { return value }
+        if let value = tier as? Double { return Int(value) }
+        if let value = tier as? String { return Int(value) }
+        return nil
     }
 
     /// Unverified JWT payload (header.payload.sig) — only used for non-sensitive display claims.
@@ -63,6 +73,7 @@ enum GrokAuthError: LocalizedError, Equatable {
     case refreshFailed(String)
     case loginFailed(String)
     case loginCancelled
+    case lockBusy
 
     var errorDescription: String? {
         switch self {
@@ -84,15 +95,27 @@ enum GrokAuthError: LocalizedError, Equatable {
             return message
         case .loginCancelled:
             return "Sign-in cancelled."
+        case .lockBusy:
+            return "Another Grok process is updating the session. Try again in a moment."
         }
     }
+}
+
+/// What to do with the session just read from disk.
+enum SessionRefreshPlan: Equatable {
+    /// Disk token is usable; do not call the token endpoint.
+    case adopt(GrokSession)
+    /// Spend the refresh token currently on disk.
+    case performRefresh(GrokSession)
+    /// Nothing on disk can be refreshed.
+    case cannotRefresh(GrokSession)
 }
 
 enum GrokAuthStore {
     /// Refresh when fewer than this many seconds remain (5 minutes).
     static let refreshSkew: TimeInterval = 300
 
-    /// Default path used by Grok Build CLI.
+    /// Default path used by the grok CLI.
     static var authFileURL: URL {
         if let grokHome = ProcessInfo.processInfo.environment["GROK_HOME"], !grokHome.isEmpty {
             return URL(fileURLWithPath: grokHome, isDirectory: true)
@@ -102,57 +125,237 @@ enum GrokAuthStore {
             .appendingPathComponent(".grok/auth.json")
     }
 
-    /// Load the first session entry from auth.json.
+    /// Load the session this app uses. Prefers the device-login OIDC entry over
+    /// an API key or any other account stored in the same file.
     static func loadSession(from url: URL = authFileURL) throws -> GrokSession {
         let root = try readRoot(from: url)
-
-        for (entryKey, value) in root {
-            guard let entry = value as? [String: Any] else { continue }
-            guard let token = entry["key"] as? String, !token.isEmpty else { continue }
-
-            return GrokSession(
-                entryKey: entryKey,
-                accessToken: token,
-                refreshToken: entry["refresh_token"] as? String,
-                expiresAt: parseExpiry(entry["expires_at"] as? String),
-                email: entry["email"] as? String,
-                userId: entry["user_id"] as? String ?? entry["principal_id"] as? String,
-                teamId: entry["team_id"] as? String,
-                oidcIssuer: entry["oidc_issuer"] as? String,
-                oidcClientId: entry["oidc_client_id"] as? String,
-                authMode: entry["auth_mode"] as? String,
-                givenName: entry["first_name"] as? String,
-                familyName: entry["last_name"] as? String
-            )
+        guard let selected = selectEntry(in: root) else {
+            throw GrokAuthError.noSession
         }
-
-        throw GrokAuthError.noSession
+        return session(entryKey: selected.key, entry: selected.entry)
     }
 
     /// Session with a still-valid access token, refreshing via OIDC when needed.
+    ///
+    /// `rejectedAccessToken` is the bearer a billing call just refused. If disk
+    /// has a different, still-valid token, the CLI (or a sibling) already
+    /// refreshed and that token is adopted.
     static func validSession(
         from url: URL = authFileURL,
         skew: TimeInterval = refreshSkew,
-        forceRefresh: Bool = false
+        forceRefresh: Bool = false,
+        rejectedAccessToken: String? = nil
     ) async throws -> GrokSession {
-        var session = try loadSession(from: url)
-        if forceRefresh || session.isExpiring(within: skew) {
-            session = try await refresh(session, authFileURL: url)
+        let initial = try loadSession(from: url)
+        switch refreshPlan(
+            disk: initial,
+            skew: skew,
+            forceRefresh: forceRefresh,
+            rejectedAccessToken: rejectedAccessToken
+        ) {
+        case .adopt(let session):
+            return session
+        case .cannotRefresh:
+            throw GrokAuthError.refreshUnavailable
+        case .performRefresh:
+            // In-process gate first, then the CLI's flock. macOS `flock` is
+            // per process, so a second open in this app would not block
+            // itself; the gate covers sign-out vs refresh. The flock covers
+            // the grok CLI, which is another process on either OS.
+            return try await AuthProcessGate.shared.run {
+                try await Self.lockedRefresh(
+                    url: url,
+                    skew: skew,
+                    forceRefresh: forceRefresh,
+                    rejectedAccessToken: rejectedAccessToken
+                )
+            }
         }
-        return session
+    }
+
+    private static func lockedRefresh(
+        url: URL,
+        skew: TimeInterval,
+        forceRefresh: Bool,
+        rejectedAccessToken: String?
+    ) async throws -> GrokSession {
+        let lock: GrokAuthFileLock
+        do {
+            lock = try await GrokAuthFileLock.acquire(
+                authFileURL: url,
+                timing: .refresh,
+                heartbeat: true
+            )
+        } catch GrokAuthLockError.timedOut {
+            try await Task.sleep(nanoseconds: UInt64(GrokAuthFileLock.adoptWait * 1_000_000_000))
+            let disk = try loadSession(from: url)
+            switch refreshPlan(
+                disk: disk,
+                skew: skew,
+                forceRefresh: forceRefresh,
+                rejectedAccessToken: rejectedAccessToken
+            ) {
+            case .adopt(let session):
+                return session
+            case .cannotRefresh:
+                throw GrokAuthError.refreshUnavailable
+            case .performRefresh:
+                throw GrokAuthError.lockBusy
+            }
+        } catch {
+            throw GrokAuthError.lockBusy
+        }
+
+        let box = AuthLockBox(lock)
+        let disk = try loadSession(from: url)
+        switch refreshPlan(
+            disk: disk,
+            skew: skew,
+            forceRefresh: forceRefresh,
+            rejectedAccessToken: rejectedAccessToken
+        ) {
+        case .adopt(let session):
+            return session
+        case .cannotRefresh:
+            throw GrokAuthError.refreshUnavailable
+        case .performRefresh(let session):
+            return try await refreshHolding(
+                session,
+                url: url,
+                box: box,
+                skew: skew,
+                forceRefresh: forceRefresh,
+                rejectedAccessToken: rejectedAccessToken
+            )
+        }
+    }
+
+    /// Decide from a freshly read session. A non-expiring disk token is adopted
+    /// so two processes never present the same refresh token.
+    static func refreshPlan(
+        disk: GrokSession,
+        skew: TimeInterval = refreshSkew,
+        forceRefresh: Bool = false,
+        rejectedAccessToken: String? = nil
+    ) -> SessionRefreshPlan {
+        let fresh = !disk.isExpiring(within: skew)
+        if let rejected = rejectedAccessToken, disk.accessToken != rejected, fresh {
+            return .adopt(disk)
+        }
+        if !forceRefresh, fresh {
+            return .adopt(disk)
+        }
+        if disk.refreshToken?.isEmpty != false || disk.oidcClientId?.isEmpty != false {
+            return .cannotRefresh(disk)
+        }
+        return .performRefresh(disk)
     }
 
     static func hasSession(from url: URL = authFileURL) -> Bool {
         (try? loadSession(from: url)) != nil
     }
 
+    /// Entry the app treats as its own session, if any.
+    static func selectEntry(in root: [String: Any]) -> (key: String, entry: [String: Any])? {
+        let preferred = "\(GrokDeviceLogin.issuer)::\(GrokDeviceLogin.clientID)"
+        if let entry = usableEntry(root[preferred]) {
+            return (preferred, entry)
+        }
+        var oidc: (String, [String: Any])?
+        var any: (String, [String: Any])?
+        for key in root.keys.sorted() {
+            guard let entry = usableEntry(root[key]) else { continue }
+            if any == nil { any = (key, entry) }
+            let mode = entry["auth_mode"] as? String
+            let hasRefresh = (entry["refresh_token"] as? String)?.isEmpty == false
+            let hasClient = (entry["oidc_client_id"] as? String)?.isEmpty == false
+            if mode == "oidc" || hasRefresh || hasClient {
+                oidc = (key, entry)
+                break
+            }
+        }
+        return oidc ?? any
+    }
+
     // MARK: - Refresh
 
-    /// Exchange `refresh_token` at `{issuer}/oauth2/token` and persist the new tokens.
-    static func refresh(
+    private static func refreshHolding(
         _ session: GrokSession,
-        authFileURL url: URL = authFileURL
+        url: URL,
+        box: AuthLockBox,
+        skew: TimeInterval,
+        forceRefresh: Bool,
+        rejectedAccessToken: String?
     ) async throws -> GrokSession {
+        var session = session
+        if !box.lock.stillLive() {
+            let replacement = try await reacquire(url: url)
+            box.replace(replacement)
+            session = try loadSession(from: url)
+            switch refreshPlan(
+                disk: session,
+                skew: skew,
+                forceRefresh: forceRefresh,
+                rejectedAccessToken: rejectedAccessToken
+            ) {
+            case .adopt(let adopted):
+                return adopted
+            case .cannotRefresh:
+                throw GrokAuthError.refreshUnavailable
+            case .performRefresh(let disk):
+                session = disk
+            }
+        }
+
+        let exchanged: ExchangedTokens
+        do {
+            exchanged = try await exchangeRefreshToken(session)
+        } catch {
+            throw error
+        }
+
+        if !box.lock.stillLive() {
+            let replacement = try await reacquire(url: url)
+            box.replace(replacement)
+            let disk = try loadSession(from: url)
+            // A sibling finished a refresh while our lock was broken. Prefer
+            // their unexpired token over writing a second rotation.
+            if disk.accessToken != session.accessToken, !disk.isExpiring(within: skew) {
+                return disk
+            }
+        }
+
+        var updated = session
+        updated.accessToken = exchanged.accessToken
+        updated.refreshToken = exchanged.refreshToken
+        updated.expiresAt = exchanged.expiresAt
+        try applyTokenUpdate(
+            entryKey: session.entryKey,
+            accessToken: exchanged.accessToken,
+            refreshToken: exchanged.refreshToken,
+            expiresAt: exchanged.expiresAt,
+            to: url,
+            lock: box.lock
+        )
+        return updated
+    }
+
+    private static func reacquire(url: URL) async throws -> GrokAuthFileLock {
+        do {
+            return try await GrokAuthFileLock.acquire(authFileURL: url, timing: .refresh, heartbeat: true)
+        } catch {
+            throw GrokAuthError.lockBusy
+        }
+    }
+
+    private struct ExchangedTokens {
+        var accessToken: String
+        var refreshToken: String
+        var expiresAt: Date
+    }
+
+    /// Exchange `refresh_token` at `{issuer}/oauth2/token`. Does not write disk.
+    private static func exchangeRefreshToken(_ session: GrokSession) async throws -> ExchangedTokens {
         guard let refreshToken = session.refreshToken, !refreshToken.isEmpty else {
             throw GrokAuthError.refreshUnavailable
         }
@@ -168,9 +371,11 @@ enum GrokAuthStore {
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("GrokUsageBar/0.1", forHTTPHeaderField: "User-Agent")
+        request.setValue(GrokHTTP.userAgent, forHTTPHeaderField: "User-Agent")
+        // Stay well under the CLI's 60s stale-lock window while we hold the flock.
+        request.timeoutInterval = 20
 
-        var body: [URLQueryItem] = [
+        let body = [
             URLQueryItem(name: "grant_type", value: "refresh_token"),
             URLQueryItem(name: "refresh_token", value: refreshToken),
             URLQueryItem(name: "client_id", value: clientId),
@@ -213,27 +418,20 @@ enum GrokAuthStore {
             ?? (json["expires_in"] as? Int).map(Double.init)
             ?? 21600
         let expiresAt = Date().addingTimeInterval(expiresIn)
-
-        var updated = session
-        updated.accessToken = accessToken
-        updated.refreshToken = newRefresh
-        updated.expiresAt = expiresAt
-
-        try persistTokens(
-            entryKey: session.entryKey,
-            accessToken: accessToken,
-            refreshToken: newRefresh,
-            expiresAt: expiresAt,
-            to: url
-        )
-
-        return updated
+        return ExchangedTokens(accessToken: accessToken, refreshToken: newRefresh, expiresAt: expiresAt)
     }
 
     // MARK: - Persistence
 
     /// Write a full session (in-app login). Merges into existing auth.json.
     static func saveSession(_ session: GrokSession, to url: URL = authFileURL) throws {
+        let lock: GrokAuthFileLock
+        do {
+            lock = try GrokAuthFileLock.acquireSync(authFileURL: url, timing: .advisory, heartbeat: false)
+        } catch {
+            throw GrokAuthError.lockBusy
+        }
+        defer { lock.release() }
         var root: [String: Any] = [:]
         if FileManager.default.fileExists(atPath: url.path) {
             root = (try? readRoot(from: url)) ?? [:]
@@ -265,19 +463,63 @@ enum GrokAuthStore {
         try atomicWrite(data, to: url, mode: 0o600)
     }
 
-    /// Same as `grok logout`: drop the cached session file.
-    static func signOut(from url: URL = authFileURL) {
-        try? FileManager.default.removeItem(at: url)
+    /// Off the caller actor so a contended lock doesn't freeze the menu.
+    static func saveSessionAsync(_ session: GrokSession, to url: URL = authFileURL) async throws {
+        try await AuthProcessGate.shared.run {
+            try saveSession(session, to: url)
+        }
     }
 
-    /// Update only token fields on the existing entry; keep everything else intact.
-    private static func persistTokens(
+    /// Remove only the entry this app uses. Other accounts and API keys stay.
+    /// Deletes `auth.json` when that entry was the last one (same as the CLI
+    /// dropping an empty store). Pass `lockTiming` from tests.
+    static func signOut(
+        from url: URL = authFileURL,
+        lockTiming: GrokAuthFileLock.Timing = .advisory
+    ) throws {
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        let lock: GrokAuthFileLock
+        do {
+            lock = try GrokAuthFileLock.acquireSync(authFileURL: url, timing: lockTiming, heartbeat: false)
+        } catch GrokAuthLockError.timedOut {
+            throw GrokAuthError.lockBusy
+        } catch {
+            throw GrokAuthError.lockBusy
+        }
+        defer { lock.release() }
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        var root = try readRoot(from: url)
+        guard let selected = selectEntry(in: root) else { return }
+        root.removeValue(forKey: selected.key)
+        if root.isEmpty {
+            try FileManager.default.removeItem(at: url)
+            return
+        }
+        let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
+        try atomicWrite(data, to: url, mode: 0o600)
+    }
+
+    /// Same as `signOut`, serialized with refresh and login writes in this process.
+    static func signOutAsync(
+        from url: URL = authFileURL,
+        lockTiming: GrokAuthFileLock.Timing = .advisory
+    ) async throws {
+        try await AuthProcessGate.shared.run {
+            try signOut(from: url, lockTiming: lockTiming)
+        }
+    }
+
+    /// Update token fields on one entry. Every other key in the file, and every
+    /// other field on the entry, is kept. Caller holds `auth.json.lock`.
+    static func applyTokenUpdate(
         entryKey: String,
         accessToken: String,
         refreshToken: String,
         expiresAt: Date,
-        to url: URL
+        to url: URL,
+        lock: GrokAuthFileLock
     ) throws {
+        guard lock.stillLive() else { throw GrokAuthError.lockBusy }
         var root = try readRoot(from: url)
         guard var entry = root[entryKey] as? [String: Any] else {
             throw GrokAuthError.noSession
@@ -291,7 +533,34 @@ enum GrokAuthStore {
         try atomicWrite(data, to: url, mode: 0o600)
     }
 
-    private static func readRoot(from url: URL) throws -> [String: Any] {
+    // MARK: - File IO
+
+    private static func usableEntry(_ value: Any?) -> [String: Any]? {
+        guard let entry = value as? [String: Any],
+              let token = entry["key"] as? String,
+              !token.isEmpty
+        else { return nil }
+        return entry
+    }
+
+    private static func session(entryKey: String, entry: [String: Any]) -> GrokSession {
+        GrokSession(
+            entryKey: entryKey,
+            accessToken: entry["key"] as? String ?? "",
+            refreshToken: entry["refresh_token"] as? String,
+            expiresAt: parseExpiry(entry["expires_at"] as? String),
+            email: entry["email"] as? String,
+            userId: entry["user_id"] as? String ?? entry["principal_id"] as? String,
+            teamId: entry["team_id"] as? String,
+            oidcIssuer: entry["oidc_issuer"] as? String,
+            oidcClientId: entry["oidc_client_id"] as? String,
+            authMode: entry["auth_mode"] as? String,
+            givenName: entry["first_name"] as? String,
+            familyName: entry["last_name"] as? String
+        )
+    }
+
+    static func readRoot(from url: URL) throws -> [String: Any] {
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw GrokAuthError.authFileMissing
         }
@@ -340,6 +609,36 @@ enum GrokAuthStore {
         guard let raw else { return nil }
         return ISO8601DateFormatter.grokFractional.date(from: raw)
             ?? ISO8601DateFormatter.grok.date(from: raw)
+    }
+}
+
+/// Serializes refresh, login save, and sign-out inside this process.
+/// Taken before `auth.json.lock`. See `validSession`.
+private actor AuthProcessGate {
+    static let shared = AuthProcessGate()
+
+    func run<T: Sendable>(_ operation: @Sendable () async throws -> T) async rethrows -> T {
+        try await operation()
+    }
+}
+
+/// Keeps the refresh lock alive across the token request and releases whichever
+/// inode is current if a sibling forced a re-acquire.
+private final class AuthLockBox {
+    var lock: GrokAuthFileLock
+
+    init(_ lock: GrokAuthFileLock) {
+        self.lock = lock
+    }
+
+    func replace(_ newLock: GrokAuthFileLock) {
+        let previous = lock
+        lock = newLock
+        previous.release()
+    }
+
+    deinit {
+        lock.release()
     }
 }
 

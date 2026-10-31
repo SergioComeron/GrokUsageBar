@@ -62,11 +62,25 @@ struct SettingsView: View {
 
             Section("Notifications") {
                 Toggle(isOn: $store.notificationsEnabled) {
-                    Text("Alert at 80% and 100%")
+                    Text("Usage alerts")
                 }
                 .toggleStyle(.switch)
                 .tint(switchTint)
-                Text("Fires once per billing period for each threshold. Requires notification permission in System Settings.")
+                ForEach(UsageAlertPolicy.catalog, id: \.self) { threshold in
+                    Toggle(isOn: thresholdBinding(threshold)) {
+                        Text("Alert at \(threshold)%")
+                    }
+                    .toggleStyle(.switch)
+                    .tint(switchTint)
+                    .disabled(!store.notificationsEnabled)
+                }
+                Toggle(isOn: $store.paceAlertsEnabled) {
+                    Text("Alert if pace hits 100% before reset")
+                }
+                .toggleStyle(.switch)
+                .tint(switchTint)
+                .disabled(!store.notificationsEnabled)
+                Text("Each alert fires once per billing period. 80% and 100% are on by default. Requires notification permission in System Settings.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -80,6 +94,14 @@ struct SettingsView: View {
                     LabeledContent("Account", value: email)
                     Button("Sign out") {
                         store.signOut()
+                    }
+                    Text("Removes this Grok account from ~/.grok/auth.json. API keys and any other accounts in that file stay. If this is the only account, the Grok CLI has to sign in again too.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if let signOutError = store.signOutError {
+                        Text(signOutError)
+                            .font(.caption)
+                            .foregroundStyle(.red)
                     }
                 } else {
                     Text("No session")
@@ -111,11 +133,24 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 420, height: 480)
+        .frame(width: 440, height: 640)
         .padding()
         .onAppear {
             launchAtLogin = LaunchAtLogin.isEnabled
             launchAtLoginDetail = LaunchAtLogin.statusDescription
         }
+    }
+
+    private func thresholdBinding(_ threshold: Int) -> Binding<Bool> {
+        Binding(
+            get: { store.alertThresholds.contains(threshold) },
+            set: { enabled in
+                if enabled {
+                    store.alertThresholds.insert(threshold)
+                } else {
+                    store.alertThresholds.remove(threshold)
+                }
+            }
+        )
     }
 }
