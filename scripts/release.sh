@@ -127,7 +127,12 @@ cat > "${NOTES}" <<EOF
 Menubar usage for Grok Build — same weekly limit as \`/usage\`.
 
 ### What's new
-- SuperGrok Heavy shows as **Heavy**, not “Tier 5” (JWT \`tier\` 5)
+- **Pace**: weekly usage vs expected, and when you would hit 100% at this rate
+- Configurable alerts at 50 / 80 / 90 / 100% (80 and 100 on by default), plus an optional pace alert, once per period
+- Token refresh shares the grok CLI lock (\`auth.json.lock\`), so the app and the CLI no longer race
+- Sign out removes only this app's entry, not the whole \`auth.json\`
+- Keeps the last reading (dimmed, orange dot) when a refresh fails; refreshes on wake and when the network returns
+- A missing usage field is reported instead of showing a fake 0%
 
 ### Highlights
 - **Weekly limit** from \`GET /v1/billing?format=credits\` (\`creditUsagePercent\`)
