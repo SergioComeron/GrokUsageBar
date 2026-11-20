@@ -129,13 +129,22 @@ struct LiveBillingService: BillingServing {
         }
 
         let config = root.config
-        // A missing or renamed field must not render as a real 0%. Explicit 0 is fine.
+        // Explicit 0 is fine. A renamed field (e.g. credit_usage_percent) must
+        // still error, even when productUsage is present, so we don't paint 0%.
+        // After a weekly reset the API may omit creditUsagePercent and
+        // productUsage instead of sending 0; treat that as 0%.
         // Legacy monthly payloads (used / monthlyLimit, no credit fields) still decode below.
-        guard let percent = config.creditUsagePercent else {
-            if Self.isLegacyMonthlyPayload(credits),
-               let monthlyOnly = try? decodeLegacyMonthlyOnly(credits) {
-                return monthlyOnly
-            }
+        let percent: Double
+        if let value = config.creditUsagePercent {
+            percent = value
+        } else if Self.hasRenamedCreditUsageField(credits) {
+            throw BillingServiceError.missingCreditUsagePercent
+        } else if config.currentPeriod != nil, (config.productUsage ?? []).isEmpty {
+            percent = 0
+        } else if Self.isLegacyMonthlyPayload(credits),
+                  let monthlyOnly = try? decodeLegacyMonthlyOnly(credits) {
+            return monthlyOnly
+        } else {
             throw BillingServiceError.missingCreditUsagePercent
         }
         let periodKind = UsagePeriodKind.parse(config.currentPeriod?.type)
@@ -187,6 +196,17 @@ struct LiveBillingService: BillingServing {
             history: history,
             fetchedAt: Date()
         )
+    }
+
+    /// True when the payload uses a snake_case (or otherwise renamed) percent
+    /// field instead of `creditUsagePercent`. Those must not decode as 0%.
+    private static func hasRenamedCreditUsageField(_ data: Data) -> Bool {
+        guard
+            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let config = obj["config"] as? [String: Any]
+        else { return false }
+        if config["creditUsagePercent"] != nil { return false }
+        return config["credit_usage_percent"] != nil
     }
 
     /// True for the pre-credits monthly document. A credits document that simply

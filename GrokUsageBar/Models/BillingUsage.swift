@@ -257,6 +257,14 @@ struct BillingUsage: Equatable, Sendable {
         return "\(s) – \(e)"
     }
 
+    /// True when this snapshot belongs to a window that has already ended.
+    /// A missing end date is treated as still current so a failed refresh can
+    /// keep the last number instead of wiping the bar.
+    func billingWindowHasEnded(at now: Date = Date()) -> Bool {
+        guard let end = billingPeriodEnd else { return false }
+        return end < now
+    }
+
     /// Pace against this account's window. Nil when the API didn't send start and end.
     func pace(at now: Date = Date()) -> UsagePace? {
         guard let start = billingPeriodStart, let end = billingPeriodEnd else { return nil }

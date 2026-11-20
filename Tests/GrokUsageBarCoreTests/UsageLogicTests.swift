@@ -246,6 +246,44 @@ final class UsageLogicTests: XCTestCase {
         }
     }
 
+    func testPostResetCreditsPayloadOmittingPercentDecodesAsZero() throws {
+        // Shape captured 20 Nov 2026 from GET /v1/billing?format=credits
+        // after the weekly window rolled over: no creditUsagePercent, no productUsage.
+        // Anonymized: no tokens, emails, or account ids.
+        let payload = Data(#"{"config":{"currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY","start":"2026-11-19T08:22:49.087164+00:00","end":"2026-11-26T08:22:49.087164+00:00"},"onDemandCap":{"val":0},"onDemandUsed":{"val":0},"isUnifiedBillingUser":true,"prepaidBalance":{"val":0},"topUpMethod":"TOP_UP_METHOD_SAVED_PAYMENT_METHOD","billingPeriodStart":"2026-11-19T08:22:49.087164+00:00","billingPeriodEnd":"2026-11-26T08:22:49.087164+00:00"}}"#.utf8)
+        let usage = try LiveBillingService.decode(credits: payload, monthly: nil)
+        XCTAssertEqual(usage.creditUsagePercent, 0)
+        XCTAssertEqual(usage.periodKind, .weekly)
+        let stamp = ISO8601DateFormatter()
+        stamp.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let start = stamp.date(from: "2026-11-19T08:22:49.087164+00:00")
+        let end = stamp.date(from: "2026-11-26T08:22:49.087164+00:00")
+        XCTAssertEqual(usage.billingPeriodStart, start)
+        XCTAssertEqual(usage.billingPeriodEnd, end)
+        XCTAssertFalse(usage.billingWindowHasEnded(at: start!.addingTimeInterval(86_400)))
+        XCTAssertTrue(usage.billingWindowHasEnded(at: end!.addingTimeInterval(60)))
+    }
+
+    func testRenamedPercentWithProductBreakdownStillErrors() {
+        let payload = Data(#"{"config":{"currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY","start":"2026-11-19T08:22:49Z","end":"2026-11-26T08:22:49Z"},"credit_usage_percent":40,"productUsage":[{"product":"GrokBuild","usagePercent":40}]}}"#.utf8)
+        XCTAssertThrowsError(try LiveBillingService.decode(credits: payload, monthly: nil)) { error in
+            XCTAssertEqual(error as? BillingServiceError, .missingCreditUsagePercent)
+        }
+    }
+
+    func testExpiredBillingWindowIsDetected() {
+        var usage = makeUsage(percent: 82)
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        XCTAssertFalse(usage.billingWindowHasEnded(at: now), "missing end date stays current")
+
+        usage.billingPeriodStart = now.addingTimeInterval(-7 * 86_400)
+        usage.billingPeriodEnd = now.addingTimeInterval(-60)
+        XCTAssertTrue(usage.billingWindowHasEnded(at: now))
+
+        usage.billingPeriodEnd = now.addingTimeInterval(60)
+        XCTAssertFalse(usage.billingWindowHasEnded(at: now))
+    }
+
     func testCoalescedRefreshDoesNotOverlap() async {
         let gate = RefreshCoalescer()
         let probe = ConcurrencyProbe()

@@ -187,9 +187,10 @@ final class UsageStore: ObservableObject {
     }
 
     private func applyLoadFailure(_ message: String, previous: BillingUsage?) {
-        if let previous {
+        if let previous, !previous.billingWindowHasEnded() {
             state = .stale(previous, message)
         } else {
+            // Don't keep showing a percentage from a window that already ended.
             state = .failed(message)
         }
     }
