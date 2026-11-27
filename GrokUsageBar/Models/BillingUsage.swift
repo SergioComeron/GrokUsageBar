@@ -84,15 +84,29 @@ struct GrokSubscriptionPlan: Equatable, Sendable {
     /// Best-effort map of JWT tier → product name.
     /// Confirmed from this account: 1 = SuperGrok, 5 = SuperGrok Heavy.
     /// Billing `?format=credits` does not currently send `subscriptionTier` /
-    /// `subscriptionTierDisplay`.
+    /// `subscriptionTierDisplay`, and `/v1/settings` still reports
+    /// "SuperGrok Heavy" after a move to The X Subscription Ultra.
+    /// The JWT `tier` claim is also unchanged (Ultra keeps 5). The pair
+    /// `billingSystem=BILLING_SYSTEM_COMMERCE` + `tier=SUPER_GROK_PRO`
+    /// from `GET https://grok.com/rest/subscriptions` is what identifies
+    /// Ultra; that mapping wins over the stale display name.
     /// Tier 2 is also labelled SuperGrok Heavy, but that mapping is unconfirmed:
     /// nothing in the billing payload or in the CLI source we checked identifies
     /// JWT tier 2. Leave the label until a real tier-2 token shows otherwise.
     static func resolve(
         jwtTier: Int?,
         apiDisplayName: String? = nil,
-        apiTierKey: String? = nil
+        apiTierKey: String? = nil,
+        commerceTier: String? = nil,
+        commerceBillingSystem: String? = nil
     ) -> GrokSubscriptionPlan? {
+        if let name = xSubscriptionDisplayName(tier: commerceTier, billingSystem: commerceBillingSystem) {
+            return GrokSubscriptionPlan(
+                rawTier: jwtTier,
+                displayName: name,
+                shortBadge: shortBadge(forDisplay: name, tier: jwtTier)
+            )
+        }
         if let api = apiDisplayName?.trimmingCharacters(in: .whitespacesAndNewlines), !api.isEmpty {
             return GrokSubscriptionPlan(
                 rawTier: jwtTier,
@@ -127,8 +141,32 @@ struct GrokSubscriptionPlan: Equatable, Sendable {
         )
     }
 
+    /// The X Subscription name for a commerce-billed grok.com subscription.
+    /// The tier enums were not renamed with the bundle, so the same value
+    /// still names a legacy SuperGrok plan; the caller must already know
+    /// the billing system is commerce. Only verified pairs are listed.
+    static func xSubscriptionDisplayName(tier: String?, billingSystem: String?) -> String? {
+        guard let billingSystem,
+              billingSystem == "BILLING_SYSTEM_COMMERCE",
+              let tier else { return nil }
+        let normalized = tier
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .uppercased()
+            .replacingOccurrences(of: "SUBSCRIPTION_TIER_", with: "")
+            .replacingOccurrences(of: "-", with: "_")
+        switch normalized {
+        // Verified 2026-11-27 on this account after accounts.x.ai/unify:
+        // Ultra keeps SUPER_GROK_PRO. grok.com/overview labels it "Ultra".
+        case "SUPER_GROK_PRO":
+            return "Ultra"
+        default:
+            return nil
+        }
+    }
+
     private static func prettyTierKey(_ key: String) -> String {
         let k = key.uppercased()
+        if k.contains("ULTRA") { return "Ultra" }
         if k.contains("HEAVY") { return "SuperGrok Heavy" }
         if k.contains("PLUS") { return "SuperGrok Plus" }
         if k.contains("LITE") { return "SuperGrok Lite" }
@@ -143,6 +181,7 @@ struct GrokSubscriptionPlan: Equatable, Sendable {
 
     private static func shortBadge(forDisplay name: String, tier: Int?) -> String {
         let n = name.lowercased()
+        if n.contains("ultra") { return "Ultra" }
         if n.contains("heavy") { return "Heavy" }
         if n.contains("plus") { return "Plus" }
         if n.contains("lite") { return "Lite" }
@@ -172,7 +211,8 @@ struct BillingUsage: Equatable, Sendable {
     var billingPeriodStart: Date?
     var billingPeriodEnd: Date?
     var isUnifiedBillingUser: Bool?
-    /// SuperGrok / Heavy / … when we can resolve it (JWT + optional API fields).
+    /// SuperGrok / Heavy / Ultra / … when we can resolve it (commerce
+    /// subscriptions list, then JWT + optional API fields).
     var subscription: GrokSubscriptionPlan?
     var productUsage: [ProductUsageShare]
     /// Past cycles (and usually the current one last), oldest → newest.

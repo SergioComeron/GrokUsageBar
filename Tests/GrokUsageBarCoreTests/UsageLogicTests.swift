@@ -31,6 +31,79 @@ final class UsageLogicTests: XCTestCase {
         XCTAssertEqual(GrokSubscriptionPlan.resolve(jwtTier: 1)?.displayName, "SuperGrok")
     }
 
+    func testCommerceSuperGrokProMapsToUltraAndOverridesStaleHeavyLabel() {
+        let plan = GrokSubscriptionPlan.resolve(
+            jwtTier: 5,
+            apiDisplayName: "SuperGrok Heavy",
+            commerceTier: "SUBSCRIPTION_TIER_SUPER_GROK_PRO",
+            commerceBillingSystem: "BILLING_SYSTEM_COMMERCE"
+        )
+        XCTAssertEqual(plan?.displayName, "Ultra")
+        XCTAssertEqual(plan?.shortBadge, "Ultra")
+        XCTAssertEqual(plan?.rawTier, 5)
+
+        // Prefix-less enum and hyphenated form should also match.
+        XCTAssertEqual(
+            GrokSubscriptionPlan.xSubscriptionDisplayName(
+                tier: "super-grok-pro",
+                billingSystem: "BILLING_SYSTEM_COMMERCE"
+            ),
+            "Ultra"
+        )
+    }
+
+    func testLegacySuperGrokProDoesNotBecomeUltra() {
+        let plan = GrokSubscriptionPlan.resolve(
+            jwtTier: 5,
+            apiDisplayName: "SuperGrok Heavy",
+            commerceTier: "SUBSCRIPTION_TIER_SUPER_GROK_PRO",
+            commerceBillingSystem: "BILLING_SYSTEM_LEGACY"
+        )
+        XCTAssertEqual(plan?.displayName, "SuperGrok Heavy")
+        XCTAssertEqual(plan?.shortBadge, "Heavy")
+        XCTAssertNil(
+            GrokSubscriptionPlan.xSubscriptionDisplayName(
+                tier: "SUBSCRIPTION_TIER_SUPER_GROK_PRO",
+                billingSystem: "BILLING_SYSTEM_LEGACY"
+            )
+        )
+    }
+
+    func testUnknownCommerceTierFallsBackToJwtOrApiName() {
+        let plan = GrokSubscriptionPlan.resolve(
+            jwtTier: 5,
+            apiDisplayName: "SuperGrok Heavy",
+            commerceTier: "SUBSCRIPTION_TIER_SOMETHING_NEW",
+            commerceBillingSystem: "BILLING_SYSTEM_COMMERCE"
+        )
+        XCTAssertEqual(plan?.displayName, "SuperGrok Heavy")
+    }
+
+    func testParseActiveSubscriptionPicksNewestActiveRow() {
+        let payload = Data(#"""
+        {"subscriptions":[
+          {"tier":"SUBSCRIPTION_TIER_X_PREMIUM","status":"SUBSCRIPTION_STATUS_ACTIVE","createTime":"2025-02-19T05:01:52Z","billingSystem":"BILLING_SYSTEM_LEGACY"},
+          {"tier":"SUBSCRIPTION_TIER_SUPER_GROK_PRO","status":"SUBSCRIPTION_STATUS_INACTIVE","createTime":"2026-10-30T08:22:52Z","billingSystem":"BILLING_SYSTEM_LEGACY"},
+          {"tier":"SUBSCRIPTION_TIER_SUPER_GROK_PRO","status":"SUBSCRIPTION_STATUS_ACTIVE","createTime":"2026-11-27T13:25:40Z","billingSystem":"BILLING_SYSTEM_COMMERCE"}
+        ]}
+        """#.utf8)
+        let active = LiveBillingService.parseActiveSubscription(payload)
+        XCTAssertEqual(active?.tier, "SUBSCRIPTION_TIER_SUPER_GROK_PRO")
+        XCTAssertEqual(active?.billingSystem, "BILLING_SYSTEM_COMMERCE")
+        let plan = GrokSubscriptionPlan.resolve(
+            jwtTier: 5,
+            apiDisplayName: "SuperGrok Heavy",
+            commerceTier: active?.tier,
+            commerceBillingSystem: active?.billingSystem
+        )
+        XCTAssertEqual(plan?.displayName, "Ultra")
+    }
+
+    func testParseActiveSubscriptionIgnoresMalformedPayload() {
+        XCTAssertNil(LiveBillingService.parseActiveSubscription(Data("not-json".utf8)))
+        XCTAssertNil(LiveBillingService.parseActiveSubscription(Data(#"{"subscriptions":[]}"#.utf8)))
+    }
+
     func testMissingCreditUsagePercentIsAnError() {
         let renamed = Data(#"{"config":{"currentPeriod":{"type":"WEEKLY","start":"2026-10-01T00:00:00Z","end":"2026-10-08T00:00:00Z"},"credit_usage_percent":40}}"#.utf8)
         XCTAssertThrowsError(try LiveBillingService.decode(credits: renamed, monthly: nil)) { error in

@@ -2,10 +2,12 @@
 //  BillingService.swift
 //  GrokUsageBar
 //
-//  Same sources Grok Build uses for /usage:
+//  Same sources Grok Build uses for /usage, plus grok.com for the plan name:
 //
 //  1) GET …/v1/billing?format=credits  → weekly creditUsagePercent (what counts)
 //  2) GET …/v1/billing                 → monthly unit pool (secondary)
+//  3) GET https://grok.com/rest/subscriptions → The X Subscription plan
+//     (best-effort; Ultra still reports as SuperGrok Heavy elsewhere)
 //
 //  Authorization: Bearer <token from ~/.grok/auth.json>
 //
@@ -53,32 +55,37 @@ struct LiveBillingService: BillingServing {
     static let creditsEndpoint = URL(string: "https://cli-chat-proxy.grok.com/v1/billing?format=credits")!
     /// Monthly unit pool (secondary).
     static let monthlyEndpoint = URL(string: "https://cli-chat-proxy.grok.com/v1/billing")!
+    /// Active subscriptions as grok.com's billing page sees them (plan name).
+    static let subscriptionsEndpoint = URL(string: "https://grok.com/rest/subscriptions")!
 
     /// Override for tests / env (`GROK_BILLING_ENDPOINT` still supported as credits URL).
     var creditsURL: URL = creditsEndpoint
     var monthlyURL: URL = monthlyEndpoint
+    var subscriptionsURL: URL = subscriptionsEndpoint
     var urlSession: URLSession = .shared
 
     func fetchUsage(session: GrokSession) async throws -> BillingUsage {
-        // Weekly is required; monthly is best-effort in parallel.
+        // Weekly is required; monthly and the subscriptions list are best-effort.
         async let creditsData = fetchData(from: creditsURL, session: session)
         async let monthlyData = optionalFetchData(from: monthlyURL, session: session)
+        async let subscriptionsData = optionalFetchData(from: subscriptionsURL, session: session)
 
         let credits = try await creditsData
         let monthly = await monthlyData
+        let subscriptions = await subscriptionsData
 
         var usage = try Self.decode(credits: credits, monthly: monthly)
-        // Plan name: prefer API fields if present, else JWT `tier` claim.
-        // Decode the JWT once; the claim is display-only.
+        // Plan name: The X Subscription list first (Ultra still looks like
+        // Heavy in the JWT and in settings), then billing/settings display
+        // fields, then JWT `tier`. Decode the JWT once; the claim is display-only.
         let jwtTier = session.jwtSubscriptionTier
-        if usage.subscription == nil {
-            usage.subscription = GrokSubscriptionPlan.resolve(jwtTier: jwtTier)
-        } else if usage.subscription?.rawTier == nil, let jwtTier {
-            usage.subscription = GrokSubscriptionPlan.resolve(
-                jwtTier: jwtTier,
-                apiDisplayName: usage.subscription?.displayName
-            )
-        }
+        let commerce = subscriptions.flatMap { Self.parseActiveSubscription($0) }
+        usage.subscription = GrokSubscriptionPlan.resolve(
+            jwtTier: jwtTier,
+            apiDisplayName: usage.subscription?.displayName,
+            commerceTier: commerce?.tier,
+            commerceBillingSystem: commerce?.billingSystem
+        )
         return usage
     }
 
@@ -89,6 +96,13 @@ struct LiveBillingService: BillingServing {
         request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue(GrokHTTP.userAgent, forHTTPHeaderField: "User-Agent")
         request.timeoutInterval = 20
+        // grok.com/rest/subscriptions is a first-party web endpoint; send the
+        // same Origin/Referer the site uses and skip cookies (bearer is enough).
+        if url.host?.caseInsensitiveCompare("grok.com") == .orderedSame {
+            request.httpShouldHandleCookies = false
+            request.setValue("https://grok.com", forHTTPHeaderField: "Origin")
+            request.setValue("https://grok.com/", forHTTPHeaderField: "Referer")
+        }
 
         let (data, response): (Data, URLResponse)
         do {
@@ -306,9 +320,42 @@ struct LiveBillingService: BillingServing {
         ISO8601DateFormatter.grokFractional.date(from: raw)
             ?? ISO8601DateFormatter.grok.date(from: raw)
     }
+
+    // MARK: - grok.com subscriptions
+
+    struct ActiveSubscription: Equatable, Sendable {
+        var tier: String?
+        var billingSystem: String?
+    }
+
+    /// Newest `SUBSCRIPTION_STATUS_ACTIVE` row. An account can have more than
+    /// one active row during a switch (for example a leftover X Premium
+    /// alongside the new commerce plan); `createTime` picks the one just bought.
+    static func parseActiveSubscription(_ data: Data) -> ActiveSubscription? {
+        guard let root = try? JSONDecoder().decode(RemoteSubscriptionsRoot.self, from: data) else {
+            return nil
+        }
+        let active = (root.subscriptions ?? [])
+            .filter { $0.status == "SUBSCRIPTION_STATUS_ACTIVE" }
+            .sorted { ($0.createTime ?? "") > ($1.createTime ?? "") }
+            .first
+        guard let active else { return nil }
+        return ActiveSubscription(tier: active.tier, billingSystem: active.billingSystem)
+    }
 }
 
 // MARK: - Remote JSON (format=credits)
+
+private struct RemoteSubscriptionsRoot: Decodable {
+    let subscriptions: [RemoteSubscription]?
+}
+
+private struct RemoteSubscription: Decodable {
+    let tier: String?
+    let status: String?
+    let billingSystem: String?
+    let createTime: String?
+}
 
 private struct RemoteCreditsRoot: Decodable {
     let config: RemoteCreditsConfig
