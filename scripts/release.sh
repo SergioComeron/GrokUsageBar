@@ -127,13 +127,13 @@ cat > "${NOTES}" <<EOF
 Menubar usage for Grok Build — same weekly limit as \`/usage\`.
 
 ### What's new
-- Fixed the menu bar staying on last week's percentage after the weekly reset
-- If a refresh fails after the window has ended, the expired reading is cleared instead of kept as stale
+- The plan badge now shows **Ultra** for The X Subscription Ultra (the JWT and settings still say SuperGrok Heavy)
+- Legacy SuperGrok Heavy is unchanged
 
 ### Highlights
 - **Weekly limit** from \`GET /v1/billing?format=credits\` (\`creditUsagePercent\`)
 - Rolling **7-day window** with range + “resets in N days”
-- **Plan** badge (JWT \`tier\` 1 → SuperGrok, 5 → SuperGrok Heavy)
+- **Plan** badge (Ultra when \`grok.com/rest/subscriptions\` says The X Subscription Ultra; otherwise JWT/settings)
 - Product breakdown (Build, Chat, Imagine, …)
 - Monthly credit units as secondary info
 
