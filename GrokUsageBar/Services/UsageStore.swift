@@ -47,6 +47,8 @@ final class UsageStore: ObservableObject {
     private var timer: Timer?
     private let refreshCoalescer = RefreshCoalescer()
     private var loginTask: Task<Void, Never>?
+    private var backoffTask: Task<Void, Never>?
+    private var rateLimitedUntil: Date?
     private var wakeObserver: NSObjectProtocol?
     private var pathMonitor: NWPathMonitor?
     private var sawUnreachablePath = false
@@ -101,8 +103,14 @@ final class UsageStore: ObservableObject {
         billing is MockBillingService
     }
 
-    func refresh() async {
+    func refresh(force: Bool = false) async {
         if loginProgress != .idle, loginProgress != .finishing {
+            return
+        }
+        if !force, RateLimitBackoff.shouldSkip(until: rateLimitedUntil) {
+            if let previous = usage, let until = rateLimitedUntil {
+                state = .stale(previous, RateLimitBackoff.message(until: until))
+            }
             return
         }
         let generation = sessionGeneration
@@ -150,6 +158,9 @@ final class UsageStore: ObservableObject {
                 let usage = try await billing.fetchUsage(session: renewed)
                 guard generation == sessionGeneration else { return }
                 await applyLoaded(usage)
+            } catch let error as BillingServiceError {
+                guard generation == sessionGeneration else { return }
+                applyBillingFailure(error, previous: previous)
             } catch let error as GrokAuthError {
                 guard generation == sessionGeneration else { return }
                 applyAuthFailure(error, previous: previous)
@@ -157,6 +168,9 @@ final class UsageStore: ObservableObject {
                 guard generation == sessionGeneration else { return }
                 applyLoadFailure(error.localizedDescription, previous: previous)
             }
+        } catch let error as BillingServiceError {
+            guard generation == sessionGeneration else { return }
+            applyBillingFailure(error, previous: previous)
         } catch {
             guard generation == sessionGeneration else { return }
             applyLoadFailure(error.localizedDescription, previous: previous)
@@ -170,8 +184,50 @@ final class UsageStore: ObservableObject {
             state = .needsLogin
             return
         }
+        rateLimitedUntil = nil
+        backoffTask?.cancel()
+        backoffTask = nil
         state = .loaded(usage)
         await UsageNotifier.evaluate(usage)
+    }
+
+    private func applyBillingFailure(_ error: BillingServiceError, previous: BillingUsage?) {
+        if case .rateLimited(let retryAfter) = error {
+            applyRateLimit(retryAfter: retryAfter, previous: previous)
+            return
+        }
+        applyLoadFailure(error.localizedDescription, previous: previous)
+    }
+
+    private func applyRateLimit(retryAfter: TimeInterval, previous: BillingUsage?) {
+        let until = RateLimitBackoff.until(retryAfter: retryAfter)
+        rateLimitedUntil = until
+        let message = RateLimitBackoff.message(until: until)
+        if let previous, !previous.billingWindowHasEnded() {
+            state = .stale(previous, message)
+        } else {
+            state = .failed(message)
+        }
+        scheduleBackoffRefresh(until: until)
+    }
+
+    private func scheduleBackoffRefresh(until: Date) {
+        backoffTask?.cancel()
+        let generation = sessionGeneration
+        backoffTask = Task { [weak self] in
+            let delay = max(0, until.timeIntervalSinceNow)
+            if delay > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            }
+            guard !Task.isCancelled else { return }
+            await self?.refreshAfterBackoff(generation: generation)
+        }
+    }
+
+    private func refreshAfterBackoff(generation: Int) async {
+        guard generation == sessionGeneration else { return }
+        rateLimitedUntil = nil
+        await refresh()
     }
 
     /// Auth failures that mean "no session" clear the bar. A lock or file
@@ -223,6 +279,9 @@ final class UsageStore: ObservableObject {
     func signOut() {
         cancelLogin()
         signOutError = nil
+        backoffTask?.cancel()
+        backoffTask = nil
+        rateLimitedUntil = nil
         sessionGeneration += 1
         let generation = sessionGeneration
         Task {

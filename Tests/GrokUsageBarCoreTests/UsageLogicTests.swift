@@ -379,6 +379,103 @@ final class UsageLogicTests: XCTestCase {
         XCTAssertLessThanOrEqual(snapshot.runs, 5)
     }
 
+    func testPrepaidAndExtraUsageDisplayUsesCurrentWording() throws {
+        var usage = makeUsage(percent: 12)
+        usage.isUnifiedBillingUser = true
+        usage.periodKind = .weekly
+        usage.prepaidBalance = 0
+        usage.onDemandCap = 0
+        usage.onDemandUsed = 0
+        XCTAssertTrue(usage.showsSharedPoolCaption)
+        XCTAssertEqual(BillingUsage.sharedPoolCaption, "This percentage is the shared weekly pool for Grok and Cursor.")
+        XCTAssertFalse(usage.showsTopUpBalance)
+        XCTAssertNil(usage.topUpBalanceDisplay)
+        XCTAssertFalse(usage.showsExtraUsage)
+        XCTAssertNil(usage.extraUsageDisplay)
+
+        usage.prepaidBalance = 25.5
+        usage.onDemandUsed = 3.25
+        usage.onDemandCap = 20
+        XCTAssertTrue(usage.showsTopUpBalance)
+        XCTAssertEqual(usage.topUpBalanceDisplay, "25.50")
+        XCTAssertTrue(usage.showsExtraUsage)
+        XCTAssertEqual(BillingUsage.extraUsageLabel, "Extra usage / top-ups")
+        XCTAssertEqual(usage.extraUsageDisplay, "3.25 / 20")
+        XCTAssertEqual(BillingUsage.formatCreditAmount(40), "40")
+        XCTAssertEqual(BillingUsage.formatCreditAmount(12.5), "12.50")
+    }
+
+    func testPostResetPayloadHidesZeroTopUpsAndStillShowsSharedPool() throws {
+        let payload = Data(#"{"config":{"currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY","start":"2026-11-19T08:22:49.087164+00:00","end":"2026-11-26T08:22:49.087164+00:00"},"onDemandCap":{"val":0},"onDemandUsed":{"val":0},"isUnifiedBillingUser":true,"prepaidBalance":{"val":0},"topUpMethod":"TOP_UP_METHOD_SAVED_PAYMENT_METHOD","billingPeriodStart":"2026-11-19T08:22:49.087164+00:00","billingPeriodEnd":"2026-11-26T08:22:49.087164+00:00"}}"#.utf8)
+        let usage = try LiveBillingService.decode(credits: payload, monthly: nil)
+        XCTAssertEqual(usage.prepaidBalance, 0)
+        XCTAssertEqual(usage.onDemandCap, 0)
+        XCTAssertEqual(usage.onDemandUsed, 0)
+        XCTAssertEqual(usage.isUnifiedBillingUser, true)
+        XCTAssertTrue(usage.showsSharedPoolCaption)
+        XCTAssertFalse(usage.showsTopUpBalance)
+        XCTAssertFalse(usage.showsExtraUsage)
+    }
+
+    func testCreditsPayloadDecodesPrepaidAndOnDemandAmounts() throws {
+        let payload = Data(#"{"config":{"creditUsagePercent":18,"currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY","start":"2026-11-26T13:25:00Z","end":"2026-12-03T13:25:00Z"},"isUnifiedBillingUser":true,"prepaidBalance":{"val":40.5},"onDemandCap":{"val":100},"onDemandUsed":{"val":12}}}"#.utf8)
+        let usage = try LiveBillingService.decode(credits: payload, monthly: nil)
+        XCTAssertEqual(usage.creditUsagePercent, 18)
+        XCTAssertEqual(usage.prepaidBalance, 40.5)
+        XCTAssertEqual(usage.onDemandCap, 100)
+        XCTAssertEqual(usage.onDemandUsed, 12)
+        XCTAssertEqual(usage.topUpBalanceDisplay, "40.50")
+        XCTAssertEqual(usage.extraUsageDisplay, "12 / 100")
+    }
+
+    func testRateLimitBackoffParsesRetryAfterAndCapsDelay() {
+        XCTAssertNil(RateLimitBackoff.delay(statusCode: 500, retryAfterHeader: "30"))
+        XCTAssertEqual(RateLimitBackoff.delay(statusCode: 429, retryAfterHeader: nil), 5 * 60)
+        XCTAssertEqual(RateLimitBackoff.delay(statusCode: 429, retryAfterHeader: " 120 "), 120)
+        XCTAssertEqual(RateLimitBackoff.delay(statusCode: 429, retryAfterHeader: "0"), 5 * 60)
+        XCTAssertEqual(RateLimitBackoff.delay(statusCode: 429, retryAfterHeader: "not-a-number"), 5 * 60)
+        XCTAssertEqual(RateLimitBackoff.delay(statusCode: 429, retryAfterHeader: "3600"), 15 * 60)
+        XCTAssertEqual(RateLimitBackoff.parseRetryAfter("45"), 45)
+
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        XCTAssertFalse(RateLimitBackoff.shouldSkip(until: nil, now: now))
+        let until = RateLimitBackoff.until(retryAfter: 120, now: now)
+        XCTAssertTrue(RateLimitBackoff.shouldSkip(until: until, now: now))
+        XCTAssertFalse(RateLimitBackoff.shouldSkip(until: until, now: until))
+        XCTAssertEqual(RateLimitBackoff.message(until: now.addingTimeInterval(30), now: now), "Rate limited. Retrying in 30s.")
+        XCTAssertEqual(RateLimitBackoff.message(until: now.addingTimeInterval(5 * 60), now: now), "Rate limited. Retrying in 5 min.")
+        XCTAssertEqual(
+            BillingServiceError.rateLimited(retryAfter: 300).errorDescription,
+            "Billing API rate limited (HTTP 429). Retrying in 5 min."
+        )
+        XCTAssertEqual(
+            BillingServiceError.rateLimited(retryAfter: 45).errorDescription,
+            "Billing API rate limited (HTTP 429). Retrying in 45s."
+        )
+    }
+
+    func testMenuBarLabelShowsSignInAndUsageTint() {
+        XCTAssertEqual(UsageLoadState.needsLogin.menuBarLabelText, "Sign in")
+        XCTAssertEqual(UsageLoadState.needsLogin.menuBarUsageLevel, .warn)
+        XCTAssertEqual(UsageLoadState.failed("nope").menuBarLabelText, "!")
+        XCTAssertEqual(UsageLoadState.failed("nope").menuBarUsageLevel, .warn)
+        XCTAssertEqual(UsageLoadState.loading.menuBarLabelText, "…")
+        XCTAssertEqual(UsageLoadState.idle.menuBarLabelText, "Grok")
+
+        XCTAssertEqual(makeUsage(percent: 49).usageLevel, .ok)
+        XCTAssertEqual(makeUsage(percent: 50).usageLevel, .warn)
+        XCTAssertEqual(makeUsage(percent: 79.9).usageLevel, .warn)
+        XCTAssertEqual(makeUsage(percent: 80).usageLevel, .high)
+
+        let loaded = UsageLoadState.loaded(makeUsage(percent: 82))
+        XCTAssertEqual(loaded.menuBarLabelText, "82% wk")
+        XCTAssertEqual(loaded.menuBarUsageLevel, .high)
+
+        let stale = UsageLoadState.stale(makeUsage(percent: 12), "Rate limited. Retrying in 5 min.")
+        XCTAssertEqual(stale.menuBarLabelText, "12% wk")
+        XCTAssertEqual(stale.menuBarUsageLevel, .ok)
+    }
+
     private func jwt(_ payload: [String: Any]) -> String {
         func b64(_ object: Any) -> String {
             let data = try! JSONSerialization.data(withJSONObject: object)

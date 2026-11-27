@@ -27,11 +27,13 @@ In the panel → **Settings…** you can turn on **Open at login**, alerts at 80
 
 ## What you see
 
-- Weekly limit (rolling 7 days from your account, not Monday–Sunday)
+- Weekly limit (rolling 7 days from your account, not Monday–Sunday) — the shared pool for Grok and Cursor
 - Plan name when the session has it
 - Breakdown by product (Build, Chat, …)
+- Top-up balance and extra usage / top-ups, when the API sends them
 - Monthly credit units, when the API still sends them
 - A small history sparkline
+- The menu bar turns orange from 50% and red from 80%, and says Sign in if the session has expired
 
 The app lives in the menu bar only — no Dock icon.
 

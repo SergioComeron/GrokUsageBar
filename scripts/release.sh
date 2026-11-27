@@ -127,15 +127,18 @@ cat > "${NOTES}" <<EOF
 Menubar usage for Grok Build — same weekly limit as \`/usage\`.
 
 ### What's new
-- The plan badge now shows **Ultra** for The X Subscription Ultra (the JWT and settings still say SuperGrok Heavy)
-- Legacy SuperGrok Heavy is unchanged
+- Shows **top-up balance** and **Extra usage / top-ups** (xAI Additional Usage) when the billing document has them
+- The weekly percentage is labelled as the **shared pool for Grok and Cursor**
+- The menu bar turns orange from 50% and red from 80%, and says **Sign in** if the session is missing or expired
+- HTTP 429 responses pause refreshes (default 5 minutes, honours Retry-After, capped at 15 minutes)
+- The plan badge still shows **Ultra** for The X Subscription Ultra
 
 ### Highlights
 - **Weekly limit** from \`GET /v1/billing?format=credits\` (\`creditUsagePercent\`)
 - Rolling **7-day window** with range + “resets in N days”
 - **Plan** badge (Ultra when \`grok.com/rest/subscriptions\` says The X Subscription Ultra; otherwise JWT/settings)
 - Product breakdown (Build, Chat, Imagine, …)
-- Monthly credit units as secondary info
+- Top-up balance and extra usage when present
 
 ### Install
 1. Download \`$(basename "${ZIP}")\`

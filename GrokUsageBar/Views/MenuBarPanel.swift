@@ -98,12 +98,12 @@ struct MenuBarPanel: View {
     @ViewBuilder
     private var loginBlock: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("No Grok session", systemImage: "person.crop.circle.badge.exclamationmark")
+            Label("Sign in required", systemImage: "person.crop.circle.badge.exclamationmark")
                 .foregroundStyle(.secondary)
 
             switch store.loginProgress {
             case .idle:
-                Text("Sign in with your Grok account. Grok Build does not need to be open.")
+                Text("No session, or it has expired. Sign in with your Grok account. Grok Build does not need to be open.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Button("Sign in with Grok") {
@@ -178,6 +178,13 @@ struct MenuBarPanel: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+            }
+
+            if usage.showsSharedPoolCaption {
+                Text(BillingUsage.sharedPoolCaption)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             if let plan = usage.subscription {
@@ -261,9 +268,12 @@ struct MenuBarPanel: View {
                 }
             }
 
-            if let cap = usage.onDemandCap, cap > 0 {
-                let onDemand = usage.onDemandUsed ?? 0
-                row("On-demand", formatUnits(onDemand) + " / " + formatUnits(cap))
+            if let amount = usage.topUpBalanceDisplay {
+                row("Top-up balance", amount)
+            }
+
+            if let extra = usage.extraUsageDisplay {
+                row(BillingUsage.extraUsageLabel, extra)
             }
 
             if usage.showsHistoryChart {
@@ -302,7 +312,7 @@ struct MenuBarPanel: View {
     private var footer: some View {
         HStack {
             Button("Refresh") {
-                Task { await store.refresh() }
+                Task { await store.refresh(force: true) }
             }
             .keyboardShortcut("r", modifiers: .command)
 

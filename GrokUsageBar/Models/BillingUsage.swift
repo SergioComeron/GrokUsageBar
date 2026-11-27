@@ -355,6 +355,47 @@ struct BillingUsage: Equatable, Sendable {
         }
         return String(format: "%.1f%%", shown)
     }
+
+    /// Credit or dollar amounts from billing `val` fields (no currency symbol;
+    /// the unit is not consistently documented).
+    static func formatCreditAmount(_ value: Double) -> String {
+        if value >= 100 || value.rounded() == value {
+            return String(format: "%.0f", value)
+        }
+        return String(format: "%.2f", value)
+    }
+
+    /// Weekly (or unified) figures are one shared pool across Grok and Cursor.
+    var showsSharedPoolCaption: Bool {
+        periodKind == .weekly || isUnifiedBillingUser == true
+    }
+
+    static let sharedPoolCaption = "This percentage is the shared weekly pool for Grok and Cursor."
+
+    var showsTopUpBalance: Bool {
+        (prepaidBalance ?? 0) > 0
+    }
+
+    var topUpBalanceDisplay: String? {
+        guard let value = prepaidBalance, value > 0 else { return nil }
+        return Self.formatCreditAmount(value)
+    }
+
+    /// xAI now calls this Additional Usage, paid from top-ups.
+    var showsExtraUsage: Bool {
+        (onDemandCap ?? 0) > 0 || (onDemandUsed ?? 0) > 0
+    }
+
+    static let extraUsageLabel = "Extra usage / top-ups"
+
+    var extraUsageDisplay: String? {
+        guard showsExtraUsage else { return nil }
+        let used = onDemandUsed ?? 0
+        if let cap = onDemandCap, cap > 0 {
+            return "\(Self.formatCreditAmount(used)) / \(Self.formatCreditAmount(cap))"
+        }
+        return Self.formatCreditAmount(used)
+    }
 }
 
 enum UsageLevel: Equatable {
@@ -369,4 +410,34 @@ enum UsageLoadState: Equatable {
     case stale(BillingUsage, String?)
     case failed(String)
     case needsLogin
+
+    /// Compact menu-bar title. A missing or expired session says "Sign in"
+    /// instead of a hard-to-read dash.
+    var menuBarLabelText: String {
+        switch self {
+        case .loaded(let usage), .stale(let usage, _):
+            return usage.menuBarDisplay
+        case .loading:
+            return "…"
+        case .needsLogin:
+            return "Sign in"
+        case .failed:
+            return "!"
+        case .idle:
+            return "Grok"
+        }
+    }
+
+    /// Tint for the menu-bar percentage: default until 50%, orange to 80%, red after.
+    /// Sign-in and errors use the warning tint so they stand out.
+    var menuBarUsageLevel: UsageLevel {
+        switch self {
+        case .loaded(let usage), .stale(let usage, _):
+            return usage.usageLevel
+        case .needsLogin, .failed:
+            return .warn
+        case .idle, .loading:
+            return .unknown
+        }
+    }
 }

@@ -28,6 +28,7 @@ enum BillingServiceError: LocalizedError, Equatable {
     case decodeFailed
     case missingCreditUsagePercent
     case transport(String)
+    case rateLimited(retryAfter: TimeInterval)
 
     var errorDescription: String? {
         switch self {
@@ -43,7 +44,65 @@ enum BillingServiceError: LocalizedError, Equatable {
             return "Billing response did not include creditUsagePercent."
         case .transport(let message):
             return message
+        case .rateLimited(let retryAfter):
+            return RateLimitBackoff.errorDescription(retryAfter: retryAfter)
         }
+    }
+}
+
+/// How long to pause after HTTP 429. Honours `Retry-After` in seconds, with a
+/// 5-minute default and a 15-minute cap so the bar is not stuck all day.
+enum RateLimitBackoff {
+    static let defaultDelay: TimeInterval = 5 * 60
+    static let maximumDelay: TimeInterval = 15 * 60
+
+    /// Parsed delay from an HTTP 429. Nil when the status is not 429.
+    static func delay(statusCode: Int, retryAfterHeader: String?) -> TimeInterval? {
+        guard statusCode == 429 else { return nil }
+        return clamp(parseRetryAfter(retryAfterHeader) ?? defaultDelay)
+    }
+
+    static func parseRetryAfter(_ header: String?) -> TimeInterval? {
+        guard let raw = header?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+            return nil
+        }
+        if let seconds = Double(raw), seconds.isFinite, seconds > 0 {
+            return seconds
+        }
+        return nil
+    }
+
+    static func clamp(_ delay: TimeInterval) -> TimeInterval {
+        min(maximumDelay, max(1, delay))
+    }
+
+    static func until(retryAfter: TimeInterval, now: Date = Date()) -> Date {
+        now.addingTimeInterval(clamp(retryAfter))
+    }
+
+    static func shouldSkip(until: Date?, now: Date = Date()) -> Bool {
+        guard let until else { return false }
+        return now < until
+    }
+
+    static func message(until: Date, now: Date = Date()) -> String {
+        formatWait("Rate limited. Retrying", remaining: until.timeIntervalSince(now))
+    }
+
+    static func errorDescription(retryAfter: TimeInterval) -> String {
+        formatWait("Billing API rate limited (HTTP 429). Retrying", remaining: clamp(retryAfter))
+    }
+
+    private static func formatWait(_ prefix: String, remaining: TimeInterval) -> String {
+        if remaining <= 0 {
+            return "\(prefix)…"
+        }
+        if remaining < 90 {
+            let seconds = max(1, Int(remaining.rounded()))
+            return "\(prefix) in \(seconds)s."
+        }
+        let minutes = max(1, Int((remaining / 60).rounded(.up)))
+        return "\(prefix) in \(minutes) min."
     }
 }
 
@@ -116,6 +175,12 @@ struct LiveBillingService: BillingServing {
         }
         if http.statusCode == 401 || http.statusCode == 403 {
             throw BillingServiceError.unauthorized
+        }
+        if http.statusCode == 429 {
+            let header = http.value(forHTTPHeaderField: "Retry-After")
+            let delay = RateLimitBackoff.delay(statusCode: 429, retryAfterHeader: header)
+                ?? RateLimitBackoff.defaultDelay
+            throw BillingServiceError.rateLimited(retryAfter: delay)
         }
         guard (200...299).contains(http.statusCode) else {
             throw BillingServiceError.badResponse(http.statusCode)

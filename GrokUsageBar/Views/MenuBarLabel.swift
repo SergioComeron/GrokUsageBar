@@ -20,6 +20,7 @@ struct MenuBarLabel: View {
                 .accessibilityHidden(true)
             Text(labelText)
                 .monospacedDigit()
+                .foregroundStyle(labelColor)
             if store.isStale {
                 Circle()
                     .fill(Color.orange)
@@ -32,18 +33,17 @@ struct MenuBarLabel: View {
     }
 
     private var labelText: String {
-        switch store.state {
-        case .loaded(let usage), .stale(let usage, _):
-            // Weekly limit is the number that gates real usage (same as /usage).
-            return usage.menuBarDisplay
-        case .loading:
-            return "…"
-        case .needsLogin:
-            return "—"
-        case .failed:
-            return "!"
-        case .idle:
-            return "Grok"
+        store.state.menuBarLabelText
+    }
+
+    private var labelColor: Color {
+        switch store.state.menuBarUsageLevel {
+        case .ok, .unknown:
+            return .primary
+        case .warn:
+            return .orange
+        case .high:
+            return .red
         }
     }
 
